@@ -1,0 +1,35 @@
+# --- ROM / BIOS / game data (never commit) ---
+*.zip
+*.7z
+*.bin
+*.nv
+roms/
+nvram/
+
+# --- build output ---
+build/
+build-*/
+*.vpk
+*.elf
+*.velf
+*.self
+*.o
+*.a
+*.obj
+*.exe
+
+# --- debug output ---
+artifacts/
+*.psp2dmp
+
+# --- editor / OS ---
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+
+# editable art sources (tools/make_app_art.py)
+art_psd/
+*.psd
