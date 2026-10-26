@@ -39,6 +39,7 @@ static Jit g_jit;
 #include "new_dynarec_config.h"
 #include "../psxhle.h"
 #include "../psxinterpreter.h"
+#include "s12_hle.h" // ReSys12: game routines run natively
 #include "../psxcounters.h"
 #include "../gte.h"
 #include "emu_if.h" // emulator interface
@@ -128,7 +129,8 @@ extern uintptr_t mini_ht[32][2];
 #ifdef VITA
 // apparently Vita has a 16MB limit, so either we cut tc in half,
 // or use this hack (it's a hack because tc size was designed to be power-of-2)
-#define TC_REDUCE_BYTES 4096
+// ReSys12: 1MB more for the H8 code (src/h8, rs12_jit_h8_region: the end of the same VM block; ADR-062)
+#define TC_REDUCE_BYTES ((1 << 20) + 4096)
 #else
 #define TC_REDUCE_BYTES 0
 #endif
@@ -443,6 +445,12 @@ void ndrc_write_invalidate_one(u_int addr);
 static void ndrc_write_invalidate_many(u_int addr, u_int end);
 
 static int new_recompile_block(u_int addr);
+int rs12_ndrc_log;
+// ReSys12: a block that has 64+ instructions ends where it reaches a 1KB boundary (0 = off; harness RS12_NDRC_ALIGN,
+// Vita file ndrcalign). Long straight code entered at many points (tenkomor: computed jumps into unrolled code at
+// 0x80088000-0x80094000) compiled every entry up to the 2047 instruction limit, ~40 ms each, one a frame for 6 s;
+// with the boundaries every entry compiles at most up to the next one and the blocks after it are shared
+int rs12_ndrc_align = 1;
 static void invalidate_block(struct block_info *block);
 static void block_clear_jump_outs(struct block_info *block, int unlink);
 static void exception_assemble(struct compile_state *st, int i,
@@ -799,6 +807,9 @@ static void *start_tcache_write_reserve(u_int max_space)
     out = ndrc->translation_cache;
     end = out + max_space;
     perf_dump_wrap();
+#ifdef VITA
+    { extern volatile uint32_t rs12_ndrc_wraps; rs12_ndrc_wraps++; }
+#endif
   }
   // we do a bit more than requested to avoid large jump and lots of
   // expirations the moment we wrap
@@ -1875,15 +1886,19 @@ static void unlink_jumps_vaddr_range(u_int start, u_int end)
   }
 }
 
-#ifdef VITA
+#if defined(VITA) || defined(RS12_HARNESS)
 volatile uint32_t rs12_ndrc_invalidated; // ReSys12: blocks invalidated (stall log)
+#endif
+#ifdef VITA
+volatile uint32_t rs12_ndrc_wraps;       // ReSys12: translation cache wrapped around (old blocks expire)
+uint32_t rs12_ndrc_tc_used(void) { return (uint32_t)(out - ndrc->translation_cache); } // write position
 #endif
 
 static void invalidate_block(struct block_info *block)
 {
   u_int i;
 
-#ifdef VITA
+#if defined(VITA) || defined(RS12_HARNESS)
   rs12_ndrc_invalidated++;
 #endif
   block->is_dirty = 1;
@@ -1892,10 +1907,34 @@ static void invalidate_block(struct block_info *block)
     hash_table_remove(block->jump_in[i].vaddr);
 }
 
+#if defined(VITA) || defined(RS12_HARNESS)
+// ReSys12: Clear() of a range (DMA, interpreter stores) leaves a block whose code bytes are still the ones it was
+// compiled from (as try_restore_block checks): tenkomor loads the same code overlays again and again, and each load
+// unlinked, re-synced and later restored or recompiled every block in them
+int rs12_ndrc_keep_same = 1; // measurements (ux0:data/resys12/nokeepsame = 0)
+volatile uint32_t rs12_ndrc_kept; // blocks left valid (diagnostics)
+static int rs12_inv_keep;        // set by new_dynarec_invalidate_range only
+#endif
+#ifdef VITA
+static int rs12_inv_batch, rs12_inv_batch_hit;
+// ReSys12: invalidate several ranges with one cache sync for all the links they undo (the deferred ranges, emu_if.c)
+void new_dynarec_invalidate_begin(void) { rs12_inv_batch = 1; rs12_inv_batch_hit = 0; }
+void new_dynarec_invalidate_end(void)
+{
+  rs12_inv_batch = 0;
+  if (rs12_inv_batch_hit)
+    do_clear_cache();
+  rs12_inv_batch_hit = 0;
+}
+#endif
+
 static int invalidate_range(u_int start, u_int end,
   u32 *inv_start_ret, u32 *inv_end_ret)
 {
   struct block_info *last_block = NULL;
+#if defined(VITA) || defined(RS12_HARNESS)
+  int kept = 0;
+#endif
   u_int start_page = get_page_prev(start);
   u_int end_page = get_page(end - 1);
   u_int start_m = pmmask(start);
@@ -1928,6 +1967,13 @@ static int invalidate_range(u_int start, u_int end,
       }
       if (!block->source) // "hack" block - leave it alone
         continue;
+#if defined(VITA) || defined(RS12_HARNESS)
+      if (rs12_inv_keep && block->copy && !memcmp(block->source, block->copy, block->len)) {
+        kept++;
+        rs12_ndrc_kept++;
+        continue;
+      }
+#endif
 
       hit++;
       invalidate_block(block);
@@ -1945,10 +1991,18 @@ static int invalidate_range(u_int start, u_int end,
     }
   }
   if (hit) {
+#ifdef VITA
+    if (rs12_inv_batch) // (several ranges in a row: one sorted, merged sync at the end, new_dynarec_invalidate_end)
+      rs12_inv_batch_hit = 1;
+    else
+#endif
     do_clear_cache();
     mini_ht_clear();
   }
 
+#if defined(VITA) || defined(RS12_HARNESS)
+  if (!kept) // (a block left valid: the page still has code)
+#endif
   if (inv_start <= (start_m & ~0xfff) && inv_end >= (start_m | 0xfff))
     // the whole page is empty now
     mark_invalid_code(start, 1, 1);
@@ -1960,7 +2014,13 @@ static int invalidate_range(u_int start, u_int end,
 
 void new_dynarec_invalidate_range(unsigned int start, unsigned int end)
 {
+#if defined(VITA) || defined(RS12_HARNESS)
+  rs12_inv_keep = rs12_ndrc_keep_same;
   invalidate_range(start, end, NULL, NULL);
+  rs12_inv_keep = 0;
+#else
+  invalidate_range(start, end, NULL, NULL);
+#endif
 }
 
 // check if the range may need invalidation (must be thread-safe)
@@ -3737,7 +3797,10 @@ static void do_store_smc_check(struct compile_state *st, int i,
 #endif
   (void)count;
 #ifdef INVALIDATE_USE_COND_CALL
-  if (count == 1) {
+  // ReSys12: the conditional call needs its target within branch range of the translation cache; the Vita
+  // cache sits next to the program image and its top end is over 32MB from it (genjmp abort, 2026-10-26),
+  // so far targets take the stub path below
+  if (count == 1 && can_jump_or_call(invalidate_addr_reg[addr_hr])) {
     emit_cmpimm(HOST_TEMPREG, 1);
     emit_callne(invalidate_addr_reg[addr_hr]);
     host_tempreg_release();
@@ -4637,7 +4700,9 @@ static void hlecall_assemble(struct compile_state *st, int i,
 {
   void *hlefunc = hlecall_bad;
   uint32_t hleCode = st->source[i] & 0x03ffffff;
-  if (hleCode < ARRAY_SIZE(psxHLEt))
+  if (hleCode == RS12_HLE_CODE_LZ) // ReSys12: a game routine (s12_hle.c)
+    hlefunc = rs12_hle_lz;
+  else if (hleCode < ARRAY_SIZE(psxHLEt))
     hlefunc = psxHLEt[hleCode];
 
   assem_debug("; hlecall 0x%x\n", hleCode);
@@ -7065,6 +7130,59 @@ int ndrc_vita_collect_blocks(u_int *out, int max)
   }
   return n;
 }
+
+// ReSys12: code the game has not run yet, for compiling ahead (a first session otherwise compiled each new move's
+// code when it first ran, 40-80 ms of interpreting each time). The branch targets out of compiled blocks (their
+// links), and the functions named by JALs in the RAM pages that hold compiled blocks, taken if they look like one
+// (a stack frame set up first, or right after a return). Repeated scans follow the code from block to block.
+// Address/flags pairs (flags 0) into out; returns the count
+int ndrc_vita_scan_calls(u_int *out, int max)
+{
+  static u_char code_page[RAM_SIZE >> 12];
+  const u_int *ram = (const u_int *)psxRegs.ptrs.psxM;
+  const struct block_info *block;
+  int p, n = 0;
+  u_int a;
+  memset(code_page, 0, sizeof(code_page));
+  for (p = 0; p < ARRAY_SIZE(blocks); p++)
+    for (block = blocks[p]; block != NULL; block = block->next_by_vaddr) {
+      a = block->start;
+      if (a < 0x00800000u || (0x80000000u <= a && a < 0x80800000u) || (0xa0000000u <= a && a < 0xa0800000u))
+        code_page[(a & (RAM_SIZE - 1)) >> 12] = 1;
+    }
+  for (p = 0; p < ARRAY_SIZE(jumps) && n < max; p++) {
+    const struct jump_info *ji = jumps[p];
+    int k;
+    for (k = 0; ji && k < ji->count && n < max; k++) {
+      a = ji->e[k].target_vaddr;
+      if (!(0x80000000u <= a && a < 0x80000000u + RAM_SIZE))
+        continue;
+      out[n * 2] = a;
+      out[n * 2 + 1] = 0;
+      n++;
+    }
+  }
+  for (p = 0; p < (int)sizeof(code_page) && n < max; p++) {
+    if (!code_page[p])
+      continue;
+    for (a = (u_int)p << 10; a < ((u_int)p + 1) << 10 && n < max; a++) {
+      const u_int w = ram[a];
+      if ((w >> 26) != 3) // JAL
+        continue;
+      const u_int t = 0x80000000u | ((w & 0x3ffffff) << 2);
+      const u_int ti = (t & (RAM_SIZE - 1)) >> 2;
+      if (t >= 0x80000000u + RAM_SIZE || ti < 2)
+        continue;
+      const u_int first = ram[ti];
+      if ((first & 0xffff8000u) != 0x27bd8000u /* addiu sp, sp, -n */ && ram[ti - 2] != 0x03e00008u /* jr ra */)
+        continue;
+      out[n * 2] = t;
+      out[n * 2 + 1] = 0;
+      n++;
+    }
+  }
+  return n;
+}
 #endif
 
 void new_dynarec_load_blocks(const void *save, int size)
@@ -7449,7 +7567,8 @@ static void disassemble_one(struct compile_state *st, int i, u_int src)
       case 0x32: set_mnemonic(i, "LWC2"); type=C2LS; ls_type = LS_32; break;
       case 0x3A: set_mnemonic(i, "SWC2"); type=C2LS; ls_type = LS_32; break;
       case 0x3B:
-        if (Config.HLE && (src & 0x03ffffff) < ARRAY_SIZE(psxHLEt)) {
+        if ((Config.HLE && (src & 0x03ffffff) < ARRAY_SIZE(psxHLEt)) ||
+            (src & 0x03ffffff) == RS12_HLE_CODE_LZ) { // ReSys12: a game routine (s12_hle.c)
           set_mnemonic(i, "HLECALL");
           type = HLECALL;
         }
@@ -7790,6 +7909,9 @@ static noinline void pass1a_disassemble(struct compile_state *st, u_int pagelimi
     if(start+i*4==pagelimit-4) done=1;
     assert(start+i*4<pagelimit);
     if (i == MAXBLOCK - 2)
+      done = 1;
+    else if (rs12_ndrc_align && !done && i >= 63 && !dops[i].is_jump && !dops[i].is_ds
+             && ((start + (i + 1) * 4) & 0x3ff) == 0)
       done = 1;
   }
   if (ni_count > 32 && !stop_after_jal) {
@@ -9839,16 +9961,73 @@ void __attribute__((no_instrument_function)) __cyg_profile_func_exit(void *fn, v
 extern uint64_t sceKernelGetProcessTimeWide(void);
 volatile uint64_t rs12_ndrc_pass_us[10];
 volatile uint32_t rs12_ndrc_insns; // MIPS instructions compiled
+// compiles per block start (stats for the log: code compiled again and again shows up here). Reset by the reader
+uint32_t rs12_ndrc_hot[256][3]; // start, compiles, instructions
+uint32_t rs12_ndrc_big[8][2], rs12_ndrc_big_n; // last blocks of 400+ instructions: start, length
 static uint64_t rs12_pass_t;
 #define RS12_PASS(n) do { const uint64_t t_ = sceKernelGetProcessTimeWide(); rs12_ndrc_pass_us[n] += t_ - rs12_pass_t;   rs12_pass_t = t_; } while (0)
+#elif defined(RS12_HARNESS)
+// ReSys12 (harness): time per compile pass (qemu: only the shares mean anything), instructions compiled, and a hash of
+// (block start, instructions, code bytes emitted) per block: compiler changes that must not change the output keep it
+#include <time.h>
+uint64_t rs12_ndrc_pass_ns[10], rs12_ndrc_out_hash = 1469598103934665603ull, rs12_ndrc_out_bytes;
+uint32_t rs12_ndrc_insns;
+static uint64_t rs12_pass_t;
+static uint64_t rs12_now_ns(void)
+{
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
+}
+static void rs12_out_hash(u_int v)
+{
+  for (int k = 0; k < 4; k++, v >>= 8)
+    rs12_ndrc_out_hash = (rs12_ndrc_out_hash ^ (v & 0xff)) * 1099511628211ull;
+}
+#define RS12_PASS(n) do { const uint64_t t_ = rs12_now_ns(); rs12_ndrc_pass_ns[n] += t_ - rs12_pass_t; rs12_pass_t = t_; } while (0)
 #else
 #define RS12_PASS(n) do { } while (0)
 #endif
+// ReSys12: decode-time instruction substitutions. Some game code relies on R3000 load delays in ways this recompiler
+// hands to the interpreter on every pass (a load in a branch delay slot read by the next instruction): a replacement
+// with the same effect in that place is compiled instead. Only the compiled code changes, never RAM (the block's copy
+// for self-modifying code checks keeps the real words). Entries: address, expected word, expected previous word,
+// replacement; set per game by the board code
+const u_int *rs12_ndrc_subst;
+int rs12_ndrc_subst_n;
+static u_int rs12_subst_buf[MAXBLOCK + 64];
+static u_int *rs12_subst_source(u_int start, u_int *src, u_int pagelimit)
+{
+  const u_int n = pagelimit > start ? (pagelimit - start) / 4 : 0;
+  const u_int len = n < MAXBLOCK + 64 ? n : MAXBLOCK + 64;
+  int copied = 0;
+  // ReSys12: game routines run natively (s12_hle.c): their address gets the HLE opcode
+  if (rs12_hle_lz_head && rs12_hle_lz_head >= start && (rs12_hle_lz_head - start) / 4 < len) {
+    memcpy(rs12_subst_buf, src, len * 4);
+    copied = 1;
+    rs12_subst_buf[(rs12_hle_lz_head - start) / 4] = RS12_HLE_OP | RS12_HLE_CODE_LZ;
+  }
+  for (int k = 0; k < rs12_ndrc_subst_n; k++) {
+    const u_int *e = rs12_ndrc_subst + k * 4;
+    const u_int idx = (e[0] - start) / 4;
+    if (e[0] < start || idx >= len || idx == 0 || src[idx] != e[1] || src[idx - 1] != e[2])
+      continue;
+    if (!copied) {
+      memcpy(rs12_subst_buf, src, len * 4);
+      copied = 1;
+    }
+    if (rs12_subst_buf[idx] == src[idx]) // (an HLE opcode stays)
+      rs12_subst_buf[idx] = e[3];
+  }
+  return copied ? rs12_subst_buf : src;
+}
+
 static int noinline new_recompile_block(u_int addr)
 {
   struct compile_state st;
   u_int pagelimit = 0;
   u_int state_rflags = 0;
+  u_int *ram_source;
   int i;
 
   assem_debug("NOTCOMPILED: addr = %08x -> %p\n", addr, log_addr(out));
@@ -9929,6 +10108,8 @@ static int noinline new_recompile_block(u_int addr)
     //abort();
     return -1;
   }
+  ram_source = st.source;
+  st.source = rs12_subst_source(st.start, st.source, pagelimit);
 
   /* Pass 1: disassemble */
   /* Pass 2: register dependencies, branch targets */
@@ -9944,12 +10125,35 @@ static int noinline new_recompile_block(u_int addr)
 
 #ifdef VITA
   rs12_pass_t = sceKernelGetProcessTimeWide();
+#elif defined(RS12_HARNESS)
+  rs12_pass_t = rs12_now_ns();
 #endif
   pass1a_disassemble(&st, pagelimit);
   pass1b_bt(&st);
   RS12_PASS(1);
+#if defined(RS12_HARNESS) && !defined(VITA)
+  rs12_ndrc_insns += st.slen;
+#endif
 #ifdef VITA
   rs12_ndrc_insns += st.slen;
+  {
+    uint32_t *h = rs12_ndrc_hot[(st.start >> 2) & 255];
+    if (h[0] != st.start) {
+      h[0] = st.start;
+      h[1] = 0;
+      h[2] = 0;
+    }
+    h[1]++;
+    h[2] += st.slen;
+    if (st.slen >= 400) {
+      uint32_t *b = rs12_ndrc_big[rs12_ndrc_big_n++ & 7];
+      b[0] = st.start;
+      b[1] = st.slen;
+    }
+  }
+#else
+  if (rs12_ndrc_log) // (harness RS12_NDRC_LOG: every compiled block, to find code compiled again and again)
+    fprintf(stderr, "ndrc compile %08x len %d cycle %u\n", st.start, st.slen, psxRegs.cycle);
 #endif
 
   int clear_hack_addr = apply_hacks(&st);
@@ -10021,12 +10225,9 @@ static int noinline new_recompile_block(u_int addr)
       emit_writeword(0, &psxRegs.pc);
       emit_test(1, 1);
     }
-    #ifdef __aarch64__
+    // ReSys12: far-safe on every host (the Vita translation cache can sit over 32MB from the asm entry points)
     emit_jeq(out + 4*2);
     emit_far_jump(new_dyna_leave);
-    #else
-    emit_jne(new_dyna_leave);
-    #endif
   }
   else if (((st.start & ~0xa0000010) == 0xa0 || (st.start & ~0xa0000000) == 0xc0) &&
            psxRegs.biosFuncsHooked)
@@ -10036,24 +10237,16 @@ static int noinline new_recompile_block(u_int addr)
     emit_readbyte(&psxRegs.stop, 1);
     emit_readword(&psxRegs.pc, 0);
     emit_cmpimm(1, 0xf0u); // see psxbios.c
-    #ifdef __aarch64__
     emit_jl(out + 4*2);
     emit_far_jump(new_dyna_leave);
-    #else
-    emit_jge(new_dyna_leave);
-    #endif
     if (st.start <= 0xc0u)
       emit_cmpimm(0, st.start);
     else {
       emit_movimm(st.start, 1);
       emit_cmp(0, 1);
     }
-    #ifdef __aarch64__
     emit_jeq(out + 4*2);
     emit_far_jump(jump_to_new_pc);
-    #else
-    emit_jne(jump_to_new_pc);
-    #endif
   }
 
   for(i=0;i<st.slen;i++)
@@ -10278,7 +10471,7 @@ static int noinline new_recompile_block(u_int addr)
   }
 
   struct block_info *block =
-    block_info_new(st.start, source_len, st.source, jump_in_count, jump_out_count);
+    block_info_new(st.start, source_len, ram_source, jump_in_count, jump_out_count);
   block->reg_sv_flags = state_rflags;
 
   int jump_in_i = 0;
@@ -10321,6 +10514,12 @@ static int noinline new_recompile_block(u_int addr)
 #endif
   stat_inc(stat_bc_direct);
   RS12_PASS(9);
+#if defined(RS12_HARNESS) && !defined(VITA)
+  rs12_out_hash(st.start);
+  rs12_out_hash(st.slen);
+  rs12_out_hash((u_int)(out - beginning));
+  rs12_ndrc_out_bytes += (u_int)(out - beginning);
+#endif
   return 0;
 }
 

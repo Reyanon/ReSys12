@@ -12,6 +12,16 @@
 #include <string.h>
 
 H8State h8;
+uint32_t h8_prof[H8P_N];
+uint32_t h8_prof_chip[0x300][2]; // on-chip accesses by address - 0xfffd10 (read, write)
+uint64_t h8_prof_ns; // RS12_SUB_PROFILE: time in peripheral updates
+#ifdef RS12_SUB_PROFILE
+volatile uint8_t h8_phase;
+extern uint64_t s12_prof_now_ns(void);
+#define H8P(i) (h8_prof[i]++)
+#else
+#define H8P(i) ((void)0)
+#endif
 
 // ---- memory ----
 // On the H8/300H every access (fetch, byte, word) takes 2 states in MAME; wait states are not modelled.
@@ -23,9 +33,23 @@ static inline uint16_t mem_read16(uint32_t a)
 		return (uint16_t)(h8.rom[a] << 8 | h8.rom[a + 1]);
 	if (a - h8.ram_base < h8.ram_size)
 		return h8.ram[(a - h8.ram_base) >> 1];
-	if (a >= 0xfffd10)
-		return h8_onchip_read16(a);
-	return h8_ext_read16(a);
+	if (a >= 0xfffd10) {
+		H8P(H8P_CHIP_R);
+#ifdef RS12_SUB_PROFILE
+		h8_prof_chip[(a - 0xfffd10) & 0x2ff][0]++;
+#endif
+		if (a < 0xffff10) // on-chip RAM (variables, stack): here instead of the on-chip register path
+			return (uint16_t)(h8.iram[a - 0xfffd10] << 8 | h8.iram[a - 0xfffd10 + 1]);
+		H8PH_ENTER(H8PH_CHIP);
+		const uint16_t v = h8_onchip_read16(a);
+		H8PH_LEAVE();
+		return v;
+	}
+	H8P(H8P_EXT_R);
+	H8PH_ENTER(H8PH_EXT);
+	const uint16_t v = h8_ext_read16(a);
+	H8PH_LEAVE();
+	return v;
 }
 
 static inline uint8_t mem_read8(uint32_t a)
@@ -37,9 +61,23 @@ static inline uint8_t mem_read8(uint32_t a)
 		const uint16_t w = h8.ram[(a - h8.ram_base) >> 1];
 		return (uint8_t)((a & 1) ? w : w >> 8);
 	}
-	if (a >= 0xfffd10)
-		return h8_onchip_read8(a);
-	return h8_ext_read8(a);
+	if (a >= 0xfffd10) {
+		H8P(H8P_CHIP_R);
+#ifdef RS12_SUB_PROFILE
+		h8_prof_chip[(a - 0xfffd10) & 0x2ff][0]++;
+#endif
+		if (a < 0xffff10)
+			return h8.iram[a - 0xfffd10];
+		H8PH_ENTER(H8PH_CHIP);
+		const uint8_t v = h8_onchip_read8(a);
+		H8PH_LEAVE();
+		return v;
+	}
+	H8P(H8P_EXT_R);
+	H8PH_ENTER(H8PH_EXT);
+	const uint8_t v = h8_ext_read8(a);
+	H8PH_LEAVE();
+	return v;
 }
 
 static inline void mem_write16(uint32_t a, uint16_t d)
@@ -50,12 +88,26 @@ static inline void mem_write16(uint32_t a, uint16_t d)
 		return;
 	}
 	if (a >= 0xfffd10) {
+		H8P(H8P_CHIP_W);
+#ifdef RS12_SUB_PROFILE
+		h8_prof_chip[(a - 0xfffd10) & 0x2ff][1]++;
+#endif
+		if (a < 0xffff10) {
+			h8.iram[a - 0xfffd10] = (uint8_t)(d >> 8);
+			h8.iram[a - 0xfffd10 + 1] = (uint8_t)d;
+			return;
+		}
+		H8PH_ENTER(H8PH_CHIP);
 		h8_onchip_write16(a, d);
+		H8PH_LEAVE();
 		return;
 	}
 	if (a < h8.rom_size)
 		return; // ROM
+	H8P(H8P_EXT_W);
+	H8PH_ENTER(H8PH_EXT);
 	h8_ext_write16(a, d);
+	H8PH_LEAVE();
 }
 
 static inline void mem_write8(uint32_t a, uint8_t d)
@@ -67,12 +119,25 @@ static inline void mem_write8(uint32_t a, uint8_t d)
 		return;
 	}
 	if (a >= 0xfffd10) {
+		H8P(H8P_CHIP_W);
+#ifdef RS12_SUB_PROFILE
+		h8_prof_chip[(a - 0xfffd10) & 0x2ff][1]++;
+#endif
+		if (a < 0xffff10) {
+			h8.iram[a - 0xfffd10] = d;
+			return;
+		}
+		H8PH_ENTER(H8PH_CHIP);
 		h8_onchip_write8(a, d);
+		H8PH_LEAVE();
 		return;
 	}
 	if (a < h8.rom_size)
 		return;
+	H8P(H8P_EXT_W);
+	H8PH_ENTER(H8PH_EXT);
 	h8_ext_write8(a, d);
+	H8PH_LEAVE();
 }
 
 // ReSys12: instruction fetches come from the program ROM almost always; it is kept pre-swapped as host-order words
@@ -625,13 +690,20 @@ static h8_handler s_op_table[0x10000];
 // every instruction.
 static h8_handler s_op_idle_orig[0x200], s_op_idle_orig7e[0x100], s_op_idle_orig_nop;
 static int idle_try(uint32_t pc);
+static int idle_try_p(uint32_t pc)
+{
+	H8PH_ENTER(H8PH_IDLE);
+	const int r = idle_try(pc);
+	H8PH_LEAVE();
+	return r;
+}
 static uint8_t *s_idle_kind;
 int h8_idle_enable = 1;
 
 static void op_idle_head(void)
 {
 	if (s_idle_kind && h8.NPC < h8.rom_size && s_idle_kind[h8.NPC >> 1] && !h8.irq_vector && h8_idle_enable &&
-		idle_try(h8.NPC))
+		idle_try_p(h8.NPC))
 		return; // not executed: time jumped ahead, the loop checks icount again
 	s_op_idle_orig[h8.inst_state - 0x6a00]();
 }
@@ -639,7 +711,7 @@ static void op_idle_head(void)
 static void op_idle_head7e(void)
 {
 	if (s_idle_kind && h8.NPC < h8.rom_size && s_idle_kind[h8.NPC >> 1] && !h8.irq_vector && h8_idle_enable &&
-		idle_try(h8.NPC))
+		idle_try_p(h8.NPC))
 		return;
 	s_op_idle_orig7e[h8.inst_state - 0x7e00]();
 }
@@ -647,7 +719,7 @@ static void op_idle_head7e(void)
 static void op_idle_head_nop(void)
 {
 	if (s_idle_kind && h8.NPC < h8.rom_size && s_idle_kind[h8.NPC >> 1] && !h8.irq_vector && h8_idle_enable &&
-		idle_try(h8.NPC))
+		idle_try_p(h8.NPC))
 		return;
 	s_op_idle_orig_nop();
 }
@@ -669,6 +741,239 @@ static void op_table_init(void)
 	s_op_idle_orig_nop = s_op_table[0x0000];
 	s_op_table[0x0000] = op_idle_head_nop;
 }
+#ifdef RS12_H8_PCHIST
+// diagnostics: instructions executed per program address (word index into the 512KB program ROM)
+#define H8_PCHIST_SIZE 0x40000
+static uint32_t h8_pchist[H8_PCHIST_SIZE];
+#endif
+
+// ---- blocks: runs of ROM instructions decoded once (tools/gen_h8_blk.py, h8_blk.inc) ----
+// Each instruction of a block calls the block variant of its handler with its words; the block sets NPC / PC / PIR /
+// IR[0] / inst_state only where it stops (the interpreter does it for every instruction). It stops at the same points
+// as the interpreter: before an instruction when icount <= bcount (also after each prefix word of a prefixed opcode),
+// after one when an interrupt is pending, and after an instruction that changes PC (its own prefetch_done).
+#define H8BLK_MAX 32
+typedef struct H8BIns H8BIns;
+typedef void (*h8_blk_fn)(const H8BIns *);
+struct H8BIns {
+	h8_blk_fn fn;
+	uint32_t a;          // address of the instruction (its first word)
+	uint32_t pc;         // PC when its handler starts (after the prefix words)
+	uint32_t next;       // address of the following instruction (straight ones)
+	uint32_t pre_st[2];  // inst_state after each prefix word (an event between them leaves the rest to h8_exec_full)
+	uint16_t op;         // first word (IR[0])
+	uint16_t next_op;    // first word of the following instruction (straight ones)
+	uint16_t w[5];       // the words from pc on
+	uint16_t pre_w[2];   // prefix words
+	uint16_t cost;       // the most states it takes, prefix words included (0xffff: unknown)
+	uint8_t pre_j[2];    // IR index of each prefix word
+	uint8_t npre;
+	uint8_t native;      // diagnostics: its block code makes it (1), made but calls C (2)
+};
+typedef struct {
+	void *code;      // ARM code of the block (h8_jit_arm.inc), NULL: blk_run
+	void *body;      // ... after its entry: other blocks' code goes on here directly (r4, r5, r8 already set)
+	uint32_t max_cost; // the most states the block takes (its code needs icount - max_cost > bcount on entry)
+	uint16_t n;
+	uint8_t term;    // the last instruction changes PC
+	uint8_t jit_tried;
+	uint32_t runs;   // diagnostics: times its code ran (from h8_run)
+	uint32_t code_bytes; // diagnostics
+	H8BIns ins[];
+} H8Blk;
+#include "h8_blk.inc"
+
+#define H8BLK_NONE ((H8Blk *)1)
+#define H8BLK_PAGE 256 // instruction words a page of pointers covers
+static H8Blk **s_blk_page[0x80000 / (H8BLK_PAGE * 2)];
+int h8_blk_enable = 1; // 0: every instruction through the interpreter (comparisons: RS12_H8BLK=0)
+
+static void blk_free(void)
+{
+	for (unsigned i = 0; i < sizeof(s_blk_page) / sizeof(s_blk_page[0]); i++) {
+		if (!s_blk_page[i])
+			continue;
+		for (int k = 0; k < H8BLK_PAGE; k++)
+			if (s_blk_page[i][k] && s_blk_page[i][k] != H8BLK_NONE)
+				free(s_blk_page[i][k]);
+		free(s_blk_page[i]);
+		s_blk_page[i] = NULL;
+	}
+}
+
+static h8_handler orig_handler(uint16_t op)
+{
+	if (op >= 0x6a00 && op < 0x6c00)
+		return s_op_idle_orig[op - 0x6a00];
+	if (op >= 0x7e00 && op < 0x7f00)
+		return s_op_idle_orig7e[op - 0x7e00];
+	if (op == 0)
+		return s_op_idle_orig_nop;
+	return s_op_table[op];
+}
+
+static H8Blk *blk_build(uint32_t a)
+{
+	H8BIns ins[H8BLK_MAX];
+	int n = 0, term = 0;
+	while (n < H8BLK_MAX && a + 2 <= h8.rom_size) {
+		if (s_idle_kind && s_idle_kind[a >> 1])
+			break; // (idle loop heads keep their check: the interpreter runs them)
+		H8BIns *e = &ins[n];
+		memset(e, 0, sizeof(*e));
+		const uint16_t op = s_rom16[a >> 1];
+		h8_handler h = orig_handler(op);
+		uint32_t pc = a + 2;
+		int j;
+		uint32_t base;
+		while (h && h8_blk_dispatch(h, &j, &base)) {
+			if (e->npre == 2 || pc + 2 > h8.rom_size) {
+				h = NULL;
+				break;
+			}
+			const uint16_t w = s_rom16[pc >> 1];
+			e->pre_j[e->npre] = (uint8_t)j;
+			e->pre_w[e->npre] = w;
+			e->pre_st[e->npre] = base | w;
+			e->npre++;
+			pc += 2;
+			h = h8_lookup(base | w);
+		}
+		int kind = 0, words = 0, next = 0, cost = 0;
+		const h8_blk_fn fn = h ? h8_blk_of(h, &kind, &words, &next, &cost) : NULL;
+		if (!fn || pc + 2 * (uint32_t)words > h8.rom_size)
+			break;
+		e->fn = fn;
+		e->a = a;
+		e->pc = pc;
+		e->op = op;
+		e->cost = (uint16_t)(cost == 0xffff ? 0xffff : cost + 2 * e->npre);
+		for (int k = 0; k < words; k++)
+			e->w[k] = s_rom16[(pc >> 1) + (uint32_t)k];
+		n++;
+		if (kind == 2) {
+			term = 1;
+			break;
+		}
+		e->next = pc + 2 * (uint32_t)next;
+		e->next_op = e->w[next];
+		a = e->next;
+	}
+	if (!n)
+		return H8BLK_NONE;
+	H8Blk *b = (H8Blk *)malloc(sizeof(H8Blk) + (size_t)n * sizeof(H8BIns));
+	if (!b)
+		return H8BLK_NONE;
+	b->code = NULL;
+	b->body = NULL;
+	b->jit_tried = 0;
+	b->runs = 0;
+	b->max_cost = 0;
+	for (int i = 0; i < n; i++)
+		b->max_cost += ins[i].cost;
+	b->n = (uint16_t)n;
+	b->term = (uint8_t)term;
+	memcpy(b->ins, ins, (size_t)n * sizeof(H8BIns));
+	return b;
+}
+
+static H8Blk *blk_get(uint32_t a)
+{
+	H8Blk **pg = s_blk_page[a / (H8BLK_PAGE * 2)];
+	if (!pg) {
+		pg = (H8Blk **)calloc(H8BLK_PAGE, sizeof(H8Blk *));
+		if (!pg)
+			return H8BLK_NONE;
+		s_blk_page[a / (H8BLK_PAGE * 2)] = pg;
+	}
+	H8Blk **slot = &pg[(a >> 1) & (H8BLK_PAGE - 1)];
+	if (!*slot)
+		*slot = blk_build(a);
+	return *slot;
+}
+
+// ---- exits: the state where a block stops (blk_run and the generated code) ----
+static void blk_exit_before(const H8BIns *e)
+{
+	h8.NPC = e->a;
+	h8.PC = e->a + 2;
+	h8.PIR = h8.IR[0] = e->op;
+	h8.inst_state = e->op;
+}
+static void blk_exit_mid(const H8BIns *e, unsigned p)
+{
+	h8.NPC = e->a;
+	h8.PC = e->a + 4 + 2 * p;
+	h8.PIR = h8.IR[0] = e->op;
+	h8.inst_state = (int)e->pre_st[p];
+}
+static void blk_exit_irq(const H8BIns *e)
+{
+	h8.NPC = e->next;
+	h8.PC = e->next + 2;
+	h8.PIR = e->next_op;
+	h8.IR[0] = e->op;
+	take_interrupt();
+}
+static void blk_exit_end(const H8BIns *e)
+{
+	h8.NPC = e->next;
+	h8.PC = e->next + 2;
+	h8.PIR = h8.IR[0] = e->next_op;
+	h8.inst_state = e->next_op;
+}
+
+
+static void blk_run(const H8Blk *b)
+{
+	for (unsigned i = 0; i < b->n; i++) {
+		const H8BIns *e = &b->ins[i];
+		if (h8.icount <= h8.bcount) { // stop before e, as at its start
+			blk_exit_before(e);
+			return;
+		}
+		h8.PPC = e->a;
+#ifdef RS12_H8_PCHIST
+		h8_pchist[(e->a >> 1) & (H8_PCHIST_SIZE - 1)]++;
+#endif
+		H8P(H8P_INSN);
+		for (unsigned p = 0; p < e->npre; p++) { // a prefix word: as dispatch_*, then the interpreter's loop check
+			h8.icount -= 2;
+			h8.IR[e->pre_j[p]] = e->pre_w[p];
+			if (h8.icount <= h8.bcount) {
+				blk_exit_mid(e, p);
+				return;
+			}
+#ifdef RS12_H8_PCHIST
+			h8_pchist[(e->a >> 1) & (H8_PCHIST_SIZE - 1)]++;
+#endif
+			H8P(H8P_INSN);
+		}
+		if (b->term && i == b->n - 1u) {
+			h8.IR[0] = e->op; // (as in the interpreter while it runs: its prefetch_done may take an interrupt)
+			e->fn(e);
+			return; // (its prefetch_done set the state)
+		}
+		e->fn(e);
+		if (h8.irq_vector) { // prefetch_done of e with an interrupt pending
+			blk_exit_irq(e);
+			return;
+		}
+	}
+	blk_exit_end(&b->ins[b->n - 1]); // (no instruction changing PC at the end)
+}
+
+#if defined(__arm__)
+#include "h8_jit_arm.inc"
+#else
+int h8_jit_enable, h8_jit_native, h8_jit_chain, h8_jit_prof, h8_jit_link, h8_jit_max;
+uint32_t h8_jit_blocks, h8_jit_bytes, h8_jit_native_n, h8_jit_call_n;
+static void jit_reset(void) {}
+static int jit_writable(void) { return 0; }
+static int jit_executable(void) { return 0; }
+static void *jit_block(const H8Blk *b) { (void)b; return NULL; }
+#endif
+
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
 #endif
@@ -858,9 +1163,18 @@ static void recompute_bcount(uint64_t event_time)
 
 void h8_internal_update(uint64_t current_time)
 {
+	H8P(H8P_UPDATE);
+#ifdef RS12_SUB_PROFILE
+	const uint64_t t0 = s12_prof_now_ns();
+#endif
 	h8.in_update = 1;
+	H8PH_ENTER(H8PH_UPDATE);
 	const uint64_t ev = h8_periph_update(current_time);
+	H8PH_LEAVE();
 	h8.in_update = 0;
+#ifdef RS12_SUB_PROFILE
+	h8_prof_ns += s12_prof_now_ns() - t0;
+#endif
 	recompute_bcount(ev);
 }
 
@@ -1076,6 +1390,7 @@ static int idle_try(uint32_t pc)
 		return 0;
 	h8.icount -= n * cost;
 	h8.idle_cycles += (uint64_t)n * cost;
+	H8P(H8P_IDLE);
 	return 1;
 }
 
@@ -1085,6 +1400,8 @@ void h8_set_rom(const uint8_t *rom, uint32_t size)
 	h8.rom_size = rom ? size : 0;
 	free(s_rom16);
 	s_rom16 = NULL;
+	blk_free();
+	jit_reset();
 	if (rom) {
 		s_rom16 = (uint16_t *)malloc((size + 1) & ~1u);
 		for (uint32_t a = 0; a + 1 < size; a += 2)
@@ -1143,9 +1460,10 @@ void h8_reset(void)
 }
 
 #ifdef RS12_H8_PCHIST
-// diagnostics: instructions executed per program address (word index into the 512KB program ROM)
-#define H8_PCHIST_SIZE 0x40000
-static uint32_t h8_pchist[H8_PCHIST_SIZE];
+void h8_pchist_reset(void)
+{
+	memset(h8_pchist, 0, sizeof(h8_pchist));
+}
 
 void h8_pchist_dump(int top)
 {
@@ -1164,23 +1482,167 @@ void h8_pchist_dump(int top)
 }
 #endif
 
+uint32_t h8_jit_run_n, h8_jit_short_n; // diagnostics: block code run / not run as bcount was too close
+uint32_t h8_jit_bad_n; // blocks whose code was found overwritten (logged by the frontend)
+int h8_jit_check; // harness (RS12_H8JITCHECK): a block run taking more states than its max_cost is reported
+
+// diagnostics (harness): the block variants the code still calls, by times run (block runs, so an approximation)
+void h8_jit_report(FILE *f)
+{
+	enum { N = 512 };
+	static struct { h8_blk_fn fn; uint64_t runs; unsigned sites; } t[N];
+	unsigned n = 0;
+	uint64_t all = 0, called = 0;
+	for (unsigned i = 0; i < sizeof(s_blk_page) / sizeof(s_blk_page[0]); i++) {
+		if (!s_blk_page[i])
+			continue;
+		for (int k = 0; k < H8BLK_PAGE; k++) {
+			const H8Blk *b = s_blk_page[i][k];
+			if (!b || b == H8BLK_NONE || !b->code)
+				continue;
+			for (unsigned j = 0; j < b->n; j++) {
+				const H8BIns *e = &b->ins[j];
+				all += b->runs;
+				if (e->native == 1)
+					continue;
+				called += b->runs;
+				unsigned x = 0;
+				while (x < n && t[x].fn != e->fn)
+					x++;
+				if (x == n) {
+					if (n == N)
+						continue;
+					t[n].fn = e->fn;
+					t[n].runs = 0;
+					t[n++].sites = 0;
+				}
+				t[x].runs += b->runs;
+				t[x].sites++;
+			}
+		}
+	}
+	fprintf(f, "h8 jit instructions run %llu, through C %llu\n", (unsigned long long)all, (unsigned long long)called);
+	{ // code bytes of the most run blocks that cover 50 / 90 / 99% of the instructions run
+		static struct { uint64_t w; uint32_t bytes; const H8Blk *b; } hb[8192];
+		unsigned nh = 0;
+		for (unsigned i = 0; i < sizeof(s_blk_page) / sizeof(s_blk_page[0]); i++)
+			for (int k = 0; s_blk_page[i] && k < H8BLK_PAGE; k++) {
+				const H8Blk *b = s_blk_page[i][k];
+				if (b && b != H8BLK_NONE && b->code && b->runs && nh < 8192) {
+					hb[nh].w = (uint64_t)b->runs * b->n;
+					hb[nh].b = b;
+					hb[nh++].bytes = b->code_bytes;
+				}
+			}
+		for (unsigned a = 1; a < nh; a++) // (insertion sort, by weight down)
+			for (unsigned c = a; c > 0 && hb[c].w > hb[c - 1].w; c--) {
+				const uint64_t w = hb[c].w;
+				const uint32_t by = hb[c].bytes;
+				const H8Blk *bb = hb[c].b;
+				hb[c] = hb[c - 1];
+				hb[c - 1].w = w;
+				hb[c - 1].bytes = by;
+				hb[c - 1].b = bb;
+			}
+		uint64_t cw = 0, cb = 0;
+		unsigned nb = 0, lv = 0;
+		static const double lvl[3] = { 0.5, 0.9, 0.99 };
+		for (unsigned a = 0; a < nh && lv < 3; a++) {
+			cw += hb[a].w;
+			cb += hb[a].bytes;
+			nb++;
+			while (lv < 3 && (double)cw >= lvl[lv] * (double)all) {
+				fprintf(f, "h8 jit hot %.0f%%: %u blocks, %llu bytes\n", lvl[lv] * 100, nb, (unsigned long long)cb);
+				lv++;
+			}
+		}
+		const char *dump = getenv("RS12_H8JITDUMP"); // the hottest blocks' code (raw) and their instructions
+		for (unsigned a = 0; dump && a < nh && a < 4; a++) {
+			char path[512];
+			snprintf(path, sizeof(path), "%s.%u.bin", dump, a);
+			FILE *df = fopen(path, "wb");
+			if (df) {
+				fwrite(hb[a].b->code, 1, hb[a].bytes, df);
+				fclose(df);
+			}
+			fprintf(f, "h8 jit dump %u: %06x runs %u bytes %u code %p\n", a, hb[a].b->ins[0].a, hb[a].b->runs, hb[a].bytes,
+				hb[a].b->code);
+			for (unsigned j = 0; j < hb[a].b->n; j++)
+				fprintf(f, "h8 jit dump %u ins %06x %04x fn %p native %u\n", a, hb[a].b->ins[j].a, hb[a].b->ins[j].op,
+					(void *)hb[a].b->ins[j].fn, hb[a].b->ins[j].native);
+		}
+	}
+	for (unsigned a = 0; a < n; a++)
+		for (unsigned c = a + 1; c < n; c++)
+			if (t[c].runs > t[a].runs) {
+				const h8_blk_fn fn = t[a].fn;
+				const uint64_t r = t[a].runs;
+				const unsigned s = t[a].sites;
+				t[a] = t[c];
+				t[c].fn = fn;
+				t[c].runs = r;
+				t[c].sites = s;
+			}
+	for (unsigned a = 0; a < n && a < 40; a++)
+		fprintf(f, "h8 jit calls %p %llu %u\n", (void *)t[a].fn, (unsigned long long)t[a].runs, t[a].sites);
+}
 void h8_run(int cycles)
 {
+	H8P(H8P_RUN);
 	h8.end_time += (uint64_t)(int64_t)cycles;
 	h8.icount += cycles;
 	h8_internal_update(h8_now());
 
+	const uint32_t blk_end = h8.rom_size < sizeof(s_blk_page) / sizeof(s_blk_page[0]) * H8BLK_PAGE * 2 ?
+		h8.rom_size : (uint32_t)(sizeof(s_blk_page) / sizeof(s_blk_page[0]) * H8BLK_PAGE * 2);
 	while (h8.icount > 0) {
 		while (h8.icount > h8.bcount) {
+			if (h8.inst_state < 0x10000 && h8.NPC < blk_end && h8_blk_enable) {
+				H8Blk *b = blk_get(h8.NPC);
+				if (b != H8BLK_NONE && b->ins[0].op == h8.inst_state) {
+					if (!b->code && !b->jit_tried && h8_jit_enable && jit_writable()) {
+						b->jit_tried = 1;
+						b->code = jit_block(b);
+					}
+					// the code checks icount against bcount only after its C calls (only they move bcount): on entry
+					// no instruction boundary of the block may reach bcount, else blk_run (checks every one)
+					if (b->code && jit_executable() && *(const uint32_t *)b->code != 0xE92D41F0u) {
+						// not the entry of a block (its push): the code area was overwritten (a crash at the end of
+						// the area, executing zeros, was seen once on the device): the block runs without it, counted
+						h8_jit_bad_n++;
+						b->code = b->body = NULL;
+					}
+					if (b->code && h8.icount - (int)b->max_cost > h8.bcount && jit_executable()) {
+						h8_jit_run_n++;
+						b->runs++;
+						const int ic0 = h8.icount;
+						H8PH_ENTER(H8PH_CODE);
+						((void (*)(void))b->code)();
+						H8PH_LEAVE();
+						if (h8_jit_check && ic0 - h8.icount > (int)b->max_cost) // (harness: no chain / links then)
+							fprintf(stderr, "h8 jit check: block %06x took %d states, at most %u\n", b->ins[0].a,
+								ic0 - h8.icount, b->max_cost);
+					} else {
+						h8_jit_short_n += b->code != NULL;
+						H8PH_ENTER(H8PH_BLK);
+						blk_run(b);
+						H8PH_LEAVE();
+					}
+					continue;
+				}
+			}
 			if (h8.inst_state < 0x10000)
 				h8.PPC = h8.NPC; // idle loop check: op_idle_head
 #ifdef RS12_H8_PCHIST
 			h8_pchist[(h8.PPC >> 1) & (H8_PCHIST_SIZE - 1)]++;
 #endif
+			H8P(H8P_INSN);
+			H8PH_ENTER(H8PH_INTERP);
 			if (h8.inst_state < 0x10000)
 				s_op_table[h8.inst_state]();
 			else
 				h8_exec_full();
+			H8PH_LEAVE();
 		}
 		if (h8.icount > 0)
 			while (h8.bcount && h8.icount <= h8.bcount)

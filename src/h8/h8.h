@@ -117,6 +117,24 @@ void h8_reset(void);
 void h8_run(int cycles);
 // total executed H8 states since reset
 uint64_t h8_total_cycles(void);
+// RS12_SUB_PROFILE builds: event counts (instructions, peripheral updates, idle skips, external / on-chip reads and
+// writes, h8_run calls)
+enum { H8P_INSN, H8P_UPDATE, H8P_IDLE, H8P_EXT_R, H8P_EXT_W, H8P_CHIP_R, H8P_CHIP_W, H8P_RUN, H8P_N };
+extern uint32_t h8_prof[H8P_N];
+// RS12_SUB_PROFILE builds: what the H8 side is doing now, read by a sampler thread (vita main.c, "sampler" file):
+// outside h8_run, h8_run itself, block code, blk_run, interpreter, peripheral update, idle skip, external / on-chip
+// register access, block code calling a block variant / a helper (h8_jit_prof)
+enum { H8PH_OUT, H8PH_RUN, H8PH_CODE, H8PH_BLK, H8PH_INTERP, H8PH_UPDATE, H8PH_IDLE, H8PH_EXT, H8PH_CHIP, H8PH_CALL,
+	H8PH_HELP, H8PH_N };
+extern int h8_jit_prof; // block code sets h8_phase around its C calls (made with it on)
+#ifdef RS12_SUB_PROFILE
+extern volatile uint8_t h8_phase;
+#define H8PH_ENTER(p) const uint8_t h8ph_old_ = h8_phase; h8_phase = (uint8_t)(p)
+#define H8PH_LEAVE() (h8_phase = h8ph_old_)
+#else
+#define H8PH_ENTER(p) ((void)0)
+#define H8PH_LEAVE() ((void)0)
+#endif
 // external IRQ0-7 pin (1 = asserted)
 void h8_set_irq_line(int irq, int state);
 // SCI receive pin / external clock pin

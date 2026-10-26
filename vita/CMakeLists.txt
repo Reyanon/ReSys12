@@ -53,6 +53,7 @@ add_library(rs12_core STATIC
   ${RS12_ROOT}/src/s12/s12.c
   ${RS12_ROOT}/src/s12/s12_sub.c
   ${RS12_ROOT}/src/s12/s12_jvs.c
+  ${RS12_ROOT}/src/s12/s12_hle.c
   ${RS12_ROOT}/src/s12/s12_sound.c
   ${RS12_ROOT}/src/s12/s12_state.c
   ${RS12_ROOT}/src/h8/h8.c
@@ -83,6 +84,8 @@ add_executable(${PROJECT_NAME}
   src/frontend/resample.c
   src/frontend/ui.c
   src/frontend/menu.c
+  src/frontend/update.c
+  src/frontend/touch.c
   src/video/video_gl.c
   src/platform/clock.c
   src/platform/jit.c
@@ -102,6 +105,43 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE RS12_ARM_MHZ=${RS12_ARM_MHZ})
 if(RS12_LOG)
   target_compile_definitions(${PROJECT_NAME} PRIVATE RS12_ENABLE_LOG)
 endif()
+# debug-only tools (FPS with decimals and the frame number). Release builds: -DRS12_DEBUG_TOOLS=OFF
+option(RS12_DEBUG_TOOLS "Include debug-only tools" ON)
+if(RS12_DEBUG_TOOLS)
+  target_compile_definitions(${PROJECT_NAME} PRIVATE RS12_DEBUG_TOOLS)
+endif()
+# bytes added to the code segment when vita-elf-create finds no room for its data before the data segment (set by
+# tools/build.sh, which retries with it)
+set(RS12_TEXT_PAD 0 CACHE STRING "Padding at the end of the code segment")
+target_compile_definitions(${PROJECT_NAME} PRIVATE RS12_TEXT_PAD=${RS12_TEXT_PAD})
+
+# kernel helper module (PS button, update install), in the VPK as module/rs12_kctrl.skprx (same as ReST-V). Its user stubs
+# are made here directly (vita_create_stubs runs make on an unquoted path, and this tree's path has a space)
+add_executable(rs12_kctrl kmod/rs12_kctrl.c)
+set_target_properties(rs12_kctrl PROPERTIES LINK_FLAGS "-nostdlib")
+target_compile_options(rs12_kctrl PRIVATE -fno-builtin)
+target_link_libraries(rs12_kctrl SceCtrlForDriver_stub SceThreadmgrForDriver_stub SceIofilemgrForDriver_stub SceSysmemForDriver_stub)
+# (vita_create_self splits its flags on spaces, so the export config path cannot be passed through it)
+add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/rs12_kctrl.skprx"
+  COMMAND vita-elf-create -e "${CMAKE_SOURCE_DIR}/kmod/exports.yml" $<TARGET_FILE:rs12_kctrl> "${CMAKE_BINARY_DIR}/rs12_kctrl.velf"
+  COMMAND vita-make-fself -c "${CMAKE_BINARY_DIR}/rs12_kctrl.velf" "${CMAKE_BINARY_DIR}/rs12_kctrl.skprx"
+  DEPENDS rs12_kctrl "${CMAKE_SOURCE_DIR}/kmod/exports.yml"
+  VERBATIM)
+add_custom_target(kctrl_skprx ALL DEPENDS "${CMAKE_BINARY_DIR}/rs12_kctrl.skprx")
+set(RS12_KSTUB_DIR "${CMAKE_BINARY_DIR}/kctrl_stubs")
+set(RS12_KSTUB "${RS12_KSTUB_DIR}/librs12_kctrl_v4_stub_weak.a")
+add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/kctrl.yml"
+  COMMAND vita-elf-export kernel $<TARGET_FILE:rs12_kctrl> "${CMAKE_SOURCE_DIR}/kmod/exports.yml" "${CMAKE_BINARY_DIR}/kctrl.yml"
+  DEPENDS rs12_kctrl "${CMAKE_SOURCE_DIR}/kmod/exports.yml"
+  VERBATIM)
+add_custom_command(OUTPUT "${RS12_KSTUB}"
+  COMMAND vita-libs-gen "${CMAKE_BINARY_DIR}/kctrl.yml" "${RS12_KSTUB_DIR}"
+  COMMAND make -C "${RS12_KSTUB_DIR}"
+  DEPENDS "${CMAKE_BINARY_DIR}/kctrl.yml"
+  VERBATIM)
+add_custom_target(kctrl_stubs DEPENDS "${RS12_KSTUB}")
+add_dependencies(${PROJECT_NAME} kctrl_stubs)
+target_include_directories(${PROJECT_NAME} PRIVATE ${CMAKE_SOURCE_DIR}/kmod)
 
 # vitaGL rebuilt without the startup splash (ReST-V tools/build_vitagl.sh -> ~/vitagl-nosplash). Falls back to the vitasdk package
 set(RS12_VITAGL_NOSPLASH "$ENV{HOME}/vitagl-nosplash/libvitaGL.a")
@@ -114,9 +154,11 @@ else()
 endif()
 
 target_link_libraries(${PROJECT_NAME}
+  "${RS12_KSTUB}"
   rs12_core
   ${RS12_VITAGL_LIB}
   vitashark
+  zstd
   SceShaccCgExt
   mathneon
   taihen_stub
@@ -125,6 +167,7 @@ target_link_libraries(${PROJECT_NAME}
   SceGxm_stub
   SceDisplay_stub
   SceAppMgr_stub
+  SceShellSvc_stub
   SceCommonDialog_stub
   SceIme_stub
   SceAudio_stub
@@ -141,6 +184,10 @@ target_link_libraries(${PROJECT_NAME}
   stdc++
   pthread
   png
+  mbedtls
+  mbedx509
+  mbedcrypto
+  pthread
   z
   m
   c
@@ -161,8 +208,13 @@ set(RS12_SCE_SYS_FILES
   sce_sys/livearea/contents/startup.png
   sce_sys/livearea/contents/template.xml
 )
-set(RS12_VPK_ADD_ARGS "")
-set(RS12_VPK_DEPS "")
+# module/rs12_kctrl.skprx: the kernel helper; assets/blankArtwork.png: the border artwork of games without their own;
+# cacert.pem: certificates for the update check (HTTPS)
+set(RS12_VPK_ADD_ARGS -a "${CMAKE_BINARY_DIR}/rs12_kctrl.skprx=module/rs12_kctrl.skprx"
+  -a "${CMAKE_SOURCE_DIR}/sce_sys_src/blankArtwork.png=assets/blankArtwork.png"
+  -a "${CMAKE_SOURCE_DIR}/res/cacert.pem=cacert.pem")
+set(RS12_VPK_DEPS "${CMAKE_BINARY_DIR}/rs12_kctrl.skprx" "${CMAKE_SOURCE_DIR}/sce_sys_src/blankArtwork.png"
+  "${CMAKE_SOURCE_DIR}/res/cacert.pem")
 foreach(f ${RS12_SCE_SYS_FILES})
   list(APPEND RS12_VPK_ADD_ARGS -a "${CMAKE_SOURCE_DIR}/${f}=${f}")
   list(APPEND RS12_VPK_DEPS "${CMAKE_SOURCE_DIR}/${f}")
@@ -179,4 +231,5 @@ add_custom_command(OUTPUT "${RS12_VPK}"
           ${RS12_VPK_ADD_ARGS} "${RS12_VPK}"
   DEPENDS "${RS12_SFO}" "${CMAKE_BINARY_DIR}/eboot.bin" ${RS12_VPK_DEPS}
   VERBATIM)
-add_custom_target(vpk ALL DEPENDS "${RS12_VPK}")
+# made only on request (tools/build.sh with VPK=1, or the target vpk)
+add_custom_target(vpk DEPENDS "${RS12_VPK}")

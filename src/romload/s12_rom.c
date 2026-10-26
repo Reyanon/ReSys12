@@ -301,8 +301,14 @@ int s12_rom_load(S12Rom *r, const char *roms_dir, const char *name, char *msg, i
 	return rc;
 }
 
+#ifdef __vita__
+static void cache_bg_finish(void);
+#endif
 void s12_rom_free(S12Rom *r)
 {
+#ifdef __vita__
+	cache_bg_finish(); // (background readers write into the regions)
+#endif
 	for (int i = 0; i < S12_RGN_COUNT; i++) {
 		free(r->rgn[i]);
 		r->rgn[i] = NULL;
@@ -374,49 +380,258 @@ static uint64_t cache_key(const S12Game *g, const char *roms_dir)
 }
 
 #ifdef __vita__
-// newlib fread on the Vita reached ~3.5MB/s here; sceIoRead with large blocks reads at card speed
+// newlib fread on the Vita reached ~3.5MB/s here; sceIoRead with large blocks reads at card speed. The regions are
+// read in 1MB pieces by two threads at once (each with its own handle, sceIoPread at the piece's offset): one
+// reader reached ~13MB/s (80MB tektagt in 6.6 s), two 5.4 s, three or four no better.
+// Only the program and the sub CPU are read before the game starts (tektagt 4.5MB of 80MB); the sound samples (16MB)
+// and the graphics bank (56MB) follow in the background while the game boots. A ROM DMA, bank mapping or C352
+// key-on that needs a piece not read yet asks for it next and waits (s12_rom_wait)
 #include <psp2/io/fcntl.h>
+#include <psp2/kernel/processmgr.h>
+#include <psp2/kernel/threadmgr.h>
 
-static int cache_read_vita(S12Rom *r, const S12Game *g, const char *path, uint64_t key)
+int s12_rom_cache_readers = 2; // threads reading the cache
+int s12_rom_bg_load = 1;        // 0: everything is read before the game starts (measurements)
+const char *s12_rom_cache_why = ""; // why the last cache read failed (log)
+volatile uint32_t s12_rom_bg_ms;   // time the last background read took (log)
+uint32_t s12_rom_stage_ms[3];       // last cache read: header, allocation, start pieces (log)
+volatile int s12_rom_all_ready = 1; // 0 while pieces are still being read in the background
+
+#define CACHE_PIECE 0x100000
+static struct {
+	const char *path;
+	uint8_t *dst[S12_RGN_COUNT];
+	uint32_t size[S12_RGN_COUNT];
+	uint32_t first[S12_RGN_COUNT]; // first piece of each region
+	uint32_t pieces, *order;       // reading order: the regions needed at start, then the bank
+	volatile uint32_t next;        // next entry of order
+	volatile uint8_t *taken, *ready;
+	volatile int32_t want;         // a piece the emulation waits for, -1 = none
+	volatile uint32_t done;        // pieces read
+	volatile int failed;
+	uint64_t t0;
+} s_cr;
+static SceUID s_cr_th[4];
+static int s_cr_nth;
+
+// piece k: its region, the offset in the region and in the file, its size
+static int cache_piece(uint32_t k, int *rg, uint32_t *off, SceOff *foff, uint32_t *len)
 {
-	SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
-	if (fd < 0)
-		return -1;
-	CacheHeader hd;
-	if (sceIoRead(fd, &hd, sizeof(hd)) != (int)sizeof(hd) || hd.magic != CACHE_MAGIC || hd.version != CACHE_VERSION ||
-		hd.key_lo != (uint32_t)key || hd.key_hi != (uint32_t)(key >> 32)) {
-		sceIoClose(fd);
-		return -1;
+	SceOff f = sizeof(CacheHeader);
+	for (int i = 0; i < S12_RGN_COUNT; i++) {
+		const uint32_t np = (s_cr.size[i] + CACHE_PIECE - 1) / CACHE_PIECE;
+		if (k < np) {
+			*rg = i;
+			*off = k * CACHE_PIECE;
+			*foff = f + *off;
+			*len = s_cr.size[i] - *off < CACHE_PIECE ? s_cr.size[i] - *off : CACHE_PIECE;
+			return 1;
+		}
+		k -= np;
+		f += s_cr.size[i];
 	}
-	memset(r, 0, sizeof(*r));
-	r->game = g;
-	uint64_t total = 0, done = 0;
-	for (int rg = 0; rg < S12_RGN_COUNT; rg++)
-		total += hd.rgn_size[rg];
-	for (int rg = 0; rg < S12_RGN_COUNT; rg++) {
-		r->rgn_size[rg] = hd.rgn_size[rg];
-		if (!hd.rgn_size[rg])
-			continue;
-		r->rgn[rg] = (uint8_t *)malloc(hd.rgn_size[rg]);
-		if (!r->rgn[rg])
-			goto fail;
-		for (uint32_t o = 0; o < hd.rgn_size[rg];) {
-			const uint32_t want = hd.rgn_size[rg] - o < 0x800000 ? hd.rgn_size[rg] - o : 0x800000;
-			const int n = sceIoRead(fd, r->rgn[rg] + o, want);
-			if (n <= 0)
-				goto fail;
-			o += (uint32_t)n;
-			done += (uint32_t)n;
-			if (s_progress)
-				s_progress((int)(done * 1000 / (total ? total : 1)));
+	return 0;
+}
+
+// the next piece to read: the one the emulation waits for, else the next in order; -1 when all are taken
+static int32_t cache_take(void)
+{
+	const int32_t w = s_cr.want;
+	if (w >= 0 && __sync_bool_compare_and_swap(&s_cr.taken[w], 0, 1))
+		return w;
+	for (;;) {
+		const uint32_t i = __atomic_fetch_add(&s_cr.next, 1, __ATOMIC_ACQ_REL);
+		if (i >= s_cr.pieces)
+			return -1;
+		const uint32_t k = s_cr.order[i];
+		if (__sync_bool_compare_and_swap(&s_cr.taken[k], 0, 1))
+			return (int32_t)k;
+	}
+}
+
+static int cache_reader(SceSize args, void *argp)
+{
+	(void)args;
+	(void)argp;
+	SceUID fd = sceIoOpen(s_cr.path, SCE_O_RDONLY, 0);
+	if (fd < 0) {
+		s12_rom_cache_why = "reader open failed";
+		s_cr.failed = 1;
+		return 0;
+	}
+	for (;;) {
+		const int32_t k = cache_take();
+		int rg;
+		uint32_t off, len;
+		SceOff foff;
+		if (k < 0 || s_cr.failed || !cache_piece((uint32_t)k, &rg, &off, &foff, &len))
+			break;
+		if (sceIoPread(fd, s_cr.dst[rg] + off, len, foff) != (int)len) {
+			s12_rom_cache_why = "read failed";
+			s_cr.failed = 1;
+			break;
+		}
+		__atomic_store_n(&s_cr.ready[k], 1, __ATOMIC_RELEASE);
+		if (__atomic_add_fetch(&s_cr.done, 1, __ATOMIC_ACQ_REL) == s_cr.pieces) {
+			s12_rom_bg_ms = (uint32_t)((sceKernelGetProcessTimeWide() - s_cr.t0) / 1000);
+			s12_rom_all_ready = 1;
 		}
 	}
 	sceIoClose(fd);
 	return 0;
-fail:
+}
+
+// wait until bytes [off, off + len) of region rg are read (asks for them first)
+void s12_rom_wait(int rg, uint32_t off, uint32_t len)
+{
+	if (s12_rom_all_ready || !s_cr.ready || !len || off >= s_cr.size[rg])
+		return;
+	if (off + len > s_cr.size[rg])
+		len = s_cr.size[rg] - off;
+	SceUID fd = -1;
+	for (uint32_t k = s_cr.first[rg] + off / CACHE_PIECE; k <= s_cr.first[rg] + (off + len - 1) / CACHE_PIECE; k++) {
+		// a piece no reader has taken yet is read here (the readers run at a low priority on cores that are busy
+		// during play); one being read is waited for
+		if (!s_cr.ready[k] && __sync_bool_compare_and_swap(&s_cr.taken[k], 0, 1)) {
+			int prg;
+			uint32_t poff, plen;
+			SceOff foff;
+			if (fd < 0)
+				fd = sceIoOpen(s_cr.path, SCE_O_RDONLY, 0);
+			if (fd < 0 || !cache_piece(k, &prg, &poff, &foff, &plen) ||
+				sceIoPread(fd, s_cr.dst[prg] + poff, plen, foff) != (int)plen) {
+				s12_rom_cache_why = "read failed";
+				s_cr.failed = 1;
+				break;
+			}
+			__atomic_store_n(&s_cr.ready[k], 1, __ATOMIC_RELEASE);
+			if (__atomic_add_fetch(&s_cr.done, 1, __ATOMIC_ACQ_REL) == s_cr.pieces) {
+				s12_rom_bg_ms = (uint32_t)((sceKernelGetProcessTimeWide() - s_cr.t0) / 1000);
+				s12_rom_all_ready = 1;
+			}
+			continue;
+		}
+		while (!__atomic_load_n(&s_cr.ready[k], __ATOMIC_ACQUIRE) && !s_cr.failed) {
+			s_cr.want = (int32_t)k;
+			sceKernelDelayThread(200);
+		}
+	}
+	if (fd >= 0)
+		sceIoClose(fd);
+}
+
+// the background readers have finished (before the ROM is freed)
+static void cache_bg_finish(void)
+{
+	for (int i = 0; i < s_cr_nth; i++) {
+		sceKernelWaitThreadEnd(s_cr_th[i], NULL, NULL);
+		sceKernelDeleteThread(s_cr_th[i]);
+	}
+	s_cr_nth = 0;
+	free((void *)s_cr.taken);
+	free((void *)s_cr.ready);
+	free(s_cr.order);
+	s_cr.taken = s_cr.ready = NULL;
+	s_cr.order = NULL;
+	s12_rom_all_ready = 1;
+}
+
+static int cache_read_vita(S12Rom *r, const S12Game *g, const char *path, uint64_t key)
+{
+	const uint64_t t_start = sceKernelGetProcessTimeWide();
+	SceUID fd = sceIoOpen(path, SCE_O_RDONLY, 0);
+	if (fd < 0) {
+		s12_rom_cache_why = "no cache file";
+		return -1;
+	}
+	CacheHeader hd;
+	const int hok = sceIoRead(fd, &hd, sizeof(hd)) == (int)sizeof(hd) && hd.magic == CACHE_MAGIC &&
+		hd.version == CACHE_VERSION && hd.key_lo == (uint32_t)key && hd.key_hi == (uint32_t)(key >> 32);
 	sceIoClose(fd);
-	s12_rom_free(r);
-	return -1;
+	if (!hok) {
+		s12_rom_cache_why = "cache from other ROM files";
+		return -1;
+	}
+	cache_bg_finish();
+	memset(r, 0, sizeof(*r));
+	r->game = g;
+	memset((void *)&s_cr, 0, sizeof(s_cr));
+	s_cr.path = path;
+	s_cr.want = -1;
+	s_cr.t0 = sceKernelGetProcessTimeWide();
+	s12_rom_stage_ms[0] = (uint32_t)((s_cr.t0 - t_start) / 1000);
+	for (int rg = 0; rg < S12_RGN_COUNT; rg++) {
+		r->rgn_size[rg] = hd.rgn_size[rg];
+		s_cr.size[rg] = hd.rgn_size[rg];
+		s_cr.first[rg] = s_cr.pieces;
+		s_cr.pieces += (hd.rgn_size[rg] + CACHE_PIECE - 1) / CACHE_PIECE;
+		if (!hd.rgn_size[rg])
+			continue;
+		r->rgn[rg] = (uint8_t *)malloc(hd.rgn_size[rg]);
+		if (!r->rgn[rg]) {
+			s12_rom_free(r);
+			return -1;
+		}
+		s_cr.dst[rg] = r->rgn[rg];
+	}
+	s_cr.order = (uint32_t *)malloc(s_cr.pieces * sizeof(uint32_t) + 1);
+	s_cr.taken = (volatile uint8_t *)calloc(s_cr.pieces + 1, 1);
+	s_cr.ready = (volatile uint8_t *)calloc(s_cr.pieces + 1, 1);
+	if (!s_cr.order || !s_cr.taken || !s_cr.ready) {
+		cache_bg_finish();
+		s12_rom_free(r);
+		return -1;
+	}
+	s12_rom_stage_ms[1] = (uint32_t)((sceKernelGetProcessTimeWide() - s_cr.t0) / 1000);
+	uint32_t n = 0, start_pieces = 0;
+	// the regions needed at start first (program, sub CPU), then the sound samples, then the graphics bank
+	for (int pass = 0; pass < 3; pass++)
+		for (int rg = 0; rg < S12_RGN_COUNT; rg++)
+			if ((rg == S12_RGN_C352 ? 1 : rg == S12_RGN_BANK ? 2 : 0) == pass)
+				for (uint32_t k = 0; k < (s_cr.size[rg] + CACHE_PIECE - 1) / CACHE_PIECE; k++) {
+					s_cr.order[n++] = s_cr.first[rg] + k;
+					start_pieces += pass == 0 || !s12_rom_bg_load;
+				}
+	s12_rom_all_ready = s_cr.pieces == 0;
+	// readers on the cores the loading screen leaves free (CPU1 runs this thread, CPU3 is idle until the game)
+	for (int i = 0; i < s12_rom_cache_readers && s_cr_nth < 4; i++) {
+		const SceUID t = sceKernelCreateThread("rs12_cacheread", cache_reader, 0x60, 0x2000, 0,
+			i == 0 ? 0x80000 : SCE_KERNEL_CPU_MASK_USER_1, NULL);
+		if (t >= 0 && sceKernelStartThread(t, 0, NULL) >= 0)
+			s_cr_th[s_cr_nth++] = t;
+		else if (t >= 0)
+			sceKernelDeleteThread(t);
+	}
+	if (!s_cr_nth)
+		cache_reader(0, NULL); // (no thread: everything here)
+	// wait for the pieces needed at start; the bank goes on in the background at a low priority
+	for (;;) {
+		uint32_t got = 0;
+		for (uint32_t i = 0; i < start_pieces; i++)
+			got += s_cr.ready[s_cr.order[i]];
+		if (s_progress)
+			s_progress((int)((uint64_t)got * 1000 / (start_pieces ? start_pieces : 1)));
+		if (got == start_pieces || s_cr.failed)
+			break;
+		sceKernelDelayThread(2000);
+	}
+	s12_rom_stage_ms[2] = (uint32_t)((sceKernelGetProcessTimeWide() - s_cr.t0) / 1000) - s12_rom_stage_ms[1];
+	for (int i = 0; i < s_cr_nth; i++)
+		sceKernelChangeThreadPriority(s_cr_th[i], 0x78);
+	if (s_cr.failed) {
+		cache_bg_finish();
+		s12_rom_free(r);
+		return -1;
+	}
+	return 0;
+}
+#else
+volatile int s12_rom_all_ready = 1;
+void s12_rom_wait(int rg, uint32_t off, uint32_t len)
+{
+	(void)rg;
+	(void)off;
+	(void)len;
 }
 #endif
 

@@ -22,9 +22,13 @@
 #include "s12_bus.h"
 #include "s12_jvs.h"
 #include "s12_sound.h"
+#include "c352.h"
+#include "s12_rom.h"
 
-// main CPU cycles between two sub CPU slices (~1 scanline)
-#define S12_SUB_QUANTUM 2150
+// main CPU cycles between two sub CPU slices (~4 scanlines: each slice leaves the recompiled code, 2150 cost 1.7ms a
+// frame in tektagt fights; MAME sets no interleave for this board). The frontend may change it for measurements
+int s12_sub_quantum = 8600;
+#define S12_SUB_QUANTUM s12_sub_quantum
 #define S12_SUB_CLOCK 16934400
 
 static struct {
@@ -300,6 +304,7 @@ static uint64_t now_ns(void)
 	return (uint64_t)ts.tv_sec * 1000000000ull + (uint64_t)ts.tv_nsec;
 }
 #endif
+uint64_t s12_prof_now_ns(void) { return now_ns(); }
 #else
 uint64_t s12_sub_profile_ns(void) { return 0; }
 #endif
@@ -313,7 +318,9 @@ static void catch_up(void)
 	if (t >> 1) {
 #ifdef RS12_SUB_PROFILE
 		const uint64_t t0 = now_ns();
+		h8_phase = H8PH_RUN;
 		h8_run((int)(t >> 1));
+		h8_phase = H8PH_OUT;
 		s_prof_ns += now_ns() - t0;
 #else
 		h8_run((int)(t >> 1));
@@ -321,6 +328,13 @@ static void catch_up(void)
 		if (sub.jvs.tx_pos < sub.jvs.tx_len)
 			s12_jvs_update(&sub.jvs, h8_total_cycles());
 	}
+}
+
+// C352 key-on: the wave ROM may still be read in the background (Vita ROM cache, s12_rom.c)
+static void sub_wave_wait(uint32_t addr, uint32_t len)
+{
+	if (!s12_rom_all_ready)
+		s12_rom_wait(S12_RGN_C352, addr, len);
 }
 
 void s12_sub_reset(void)
@@ -357,8 +371,10 @@ void s12_sub_reset(void)
 	set_event(PSXINT_S12, S12_SUB_QUANTUM);
 
 	// C352 (25401600 Hz / 288 = 88200 Hz), rendered in frame batches (s12_sound.c)
-	if (r && r->rgn[S12_RGN_C352])
+	if (r && r->rgn[S12_RGN_C352]) {
 		s12_sound_reset(r->rgn[S12_RGN_C352], r->rgn_size[S12_RGN_C352]);
+		c352_wave_wait = sub_wave_wait;
+	}
 	else
 		s12_sound_reset(NULL, 0);
 }

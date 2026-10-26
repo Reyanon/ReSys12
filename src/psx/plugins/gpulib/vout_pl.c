@@ -89,14 +89,18 @@ int vout_flip_params(struct psx_gpu *gpu, int src_x, int src_y, struct vout_flip
   r->field = gpu->state.rs12_field_prev;
   r->dims_changed = gpu->state.dims_changed;
   gpu->state.dims_changed = 0;
+  r->pad = (unsigned char)rs12_emu_frame; // (display latency log: the emulated frame that asked for this picture)
   return 1;
 }
 
 int rs12_vout_field;
+volatile unsigned int rs12_emu_frame; // ReSys12: emulated frame number, set by the frontend (latency log)
+unsigned char rs12_vout_tag;          // ReSys12: rs12_emu_frame of the flip handed to pl_vout_flip
 
 void vout_flip_do(struct psx_gpu *gpu, const struct vout_flip_req *r)
 {
   rs12_vout_field = r->field;
+  rs12_vout_tag = r->pad;
   cbs->pl_vout_flip(gpu->vram, r->offset, r->rgb24, r->x, r->y, r->w, r->h, r->dims_changed);
 }
 
@@ -141,6 +145,7 @@ int vout_update(struct psx_gpu *gpu, int src_x, int src_y)
   offset += src_x2 * bpp / 8;
 
   rs12_vout_field = gpu->state.enhancement_active ? 0 : gpu->state.rs12_field_prev;
+  rs12_vout_tag = (unsigned char)rs12_emu_frame;
   cbs->pl_vout_flip(vram, offset, !!(gpu->status & PSX_GPU_STATUS_RGB24),
       x, y, w, h, gpu->state.dims_changed);
   gpu->state.dims_changed = 0;

@@ -71,6 +71,8 @@ void s12_dump_unmapped(void);
 void s12_sub_dump(void);
 void s12_pchist_dump(void); // RS12_SUB_PROFILE builds
 void h8_pchist_dump(int top); // RS12_H8_PCHIST builds
+void h8_pchist_reset(void);
+extern int s12_sub_quantum; // main CPU cycles between two sub CPU slices
 // End of frame for the sound side: catches the H8 up and returns this frame's C352 batch for s12_sound_render.
 // prev = the batch returned last time, already rendered (NULL the first time). See s12_sound.h.
 #include "s12_sound.h"

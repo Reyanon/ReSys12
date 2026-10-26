@@ -165,6 +165,8 @@ struct vout_flip_req {
   unsigned char rgb24, dims_changed, field, pad; // ReSys12: field = rs12_field_prev at the flip
 };
 extern int rs12_vout_field; // ReSys12: field of the frame being handed to pl_vout_flip (vout_pl.c)
+extern volatile unsigned int rs12_emu_frame; // ReSys12: emulated frame number (frontend), tags flips
+extern unsigned char rs12_vout_tag;          // ReSys12: tag of the flip being handed to pl_vout_flip
 int  vout_flip_params(struct psx_gpu *gpu, int src_x, int src_y, struct vout_flip_req *r);
 void vout_flip_do(struct psx_gpu *gpu, const struct vout_flip_req *r);
 int  vout_update(struct psx_gpu *gpu, int src_x, int src_y);

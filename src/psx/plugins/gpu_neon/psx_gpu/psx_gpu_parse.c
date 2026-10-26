@@ -164,9 +164,9 @@ static void set_triangle_color(psx_gpu_struct *psx_gpu, u32 triangle_color)
 }
 
 // ReSys12: split rendering. A fill (0x02) ignores the draw area, so its rows
-// are clipped to the instance's band here: top = rows < split_y, bottom =
-// rows >= split_y. Both instances invalidate the whole region so their
-// texture caches stay identical.
+// are clipped to the instance's band [split_y0, split_y1) here (the top band
+// starts at row 0, the bottom one ends at 1024). Every instance invalidates
+// the whole region so their texture caches stay identical.
 static void render_block_fill_band(psx_gpu_struct *psx_gpu, u32 color,
  u32 x, u32 y, u32 width, u32 height)
 {
@@ -181,16 +181,8 @@ static void render_block_fill_band(psx_gpu_struct *psx_gpu, u32 color,
     return;
 
   invalidate_texture_cache_region(psx_gpu, x, y, x + width - 1, y + height - 1);
-  if(psx_gpu->split_mode == SPLIT_TOP)
-  {
-    b0 = 0;
-    b1 = psx_gpu->split_y - 1;
-  }
-  else
-  {
-    b0 = psx_gpu->split_y;
-    b1 = 1023;
-  }
+  b0 = psx_gpu->split_y0;
+  b1 = psx_gpu->split_y1 - 1;
 
   if(psx_gpu->render_mode & RENDER_INTERLACE_ENABLED)
   {
@@ -406,12 +398,29 @@ static void undo_offset(vertex_struct *vertexes, prepared_triangle *triangle)
   }
 }
 
+// ReSys12: split rendering - a triangle wholly outside this instance's band (its rows after the draw offset, as
+// prepare_triangle computes them) is dropped before its setup, as prepare_triangle would drop it after; the
+// instance whose band it touches draws it and marks the texture cache (within the chunk, as before)
+static inline int split_outside(const psx_gpu_struct *psx_gpu, const vertex_struct *v)
+{
+  if (likely(psx_gpu->split_mode == SPLIT_OFF))
+    return 0;
+  s32 y0 = v[0].y, y1 = v[0].y;
+  if (v[1].y < y0) y0 = v[1].y;
+  if (v[1].y > y1) y1 = v[1].y;
+  if (v[2].y < y0) y0 = v[2].y;
+  if (v[2].y > y1) y1 = v[2].y;
+  const s32 offset_y = sign_extend_11bit(y0 + psx_gpu->offset_y) - y0;
+  return y0 + offset_y > psx_gpu->viewport_end_y || y1 + offset_y < psx_gpu->viewport_start_y ||
+    psx_gpu->viewport_start_y > psx_gpu->viewport_end_y;
+}
+
 static void do_triangle(psx_gpu_struct *psx_gpu, vertex_struct *vertexes,
  u32 current_command)
 {
   prepared_triangle triangle;
   RS12_STAGE(5);
-  if (prepare_triangle(psx_gpu, vertexes, &triangle))
+  if (!split_outside(psx_gpu, vertexes) && prepare_triangle(psx_gpu, vertexes, &triangle))
     render_triangle_p(psx_gpu, triangle.vertexes, current_command);
 }
 
@@ -420,13 +429,13 @@ static void do_quad(psx_gpu_struct *psx_gpu, vertex_struct *vertexes,
 {
   prepared_triangle triangle;
   RS12_STAGE(5);
-  if (prepare_triangle(psx_gpu, vertexes, &triangle))
+  if (!split_outside(psx_gpu, vertexes) && prepare_triangle(psx_gpu, vertexes, &triangle))
   {
     render_triangle_p(psx_gpu, triangle.vertexes, current_command);
     undo_offset(vertexes, &triangle);
   }
   RS12_STAGE(5);
-  if (prepare_triangle(psx_gpu, vertexes + 1, &triangle))
+  if (!split_outside(psx_gpu, vertexes + 1) && prepare_triangle(psx_gpu, vertexes + 1, &triangle))
     render_triangle_p(psx_gpu, triangle.vertexes, current_command);
 }
 
@@ -458,38 +467,43 @@ static u32 split_area_key(const psx_gpu_struct *psx_gpu)
    ((u32)(psx_gpu->logical_vy1 & 0x3FF) << 20);
 }
 
-// band of the current chunk: split_y comes from the draw area (logical_vy*);
-// solo = everything to the top instance (split_y = 1024)
+// band of the current chunk: the cuts are shares of the draw area (logical_vy*);
+// the top band starts at row 0 and the bottom one ends at 1024 (fills ignore the
+// draw area). solo = everything to the top instance
 static void split_apply_band(psx_gpu_struct *psx_gpu, int solo)
 {
   s32 y0 = psx_gpu->logical_vy0, y1 = psx_gpu->logical_vy1;
-  s32 s = y0;
-  s32 ratio = psx_gpu->split_ratio;
+  s32 cut0 = psx_gpu->split_cut[0], cut1 = psx_gpu->split_cut[1];
+  s32 idx = psx_gpu->split_mode - 1, n = psx_gpu->split_n;
+  s32 lo, hi;
   u32 i, key = split_area_key(psx_gpu);
 
   psx_gpu->split_key = key;
   for(i = 0; i < SPLIT_RATIO_TAB; i++)
     if(rs12_split_ratio_tab[i].key == key)
     {
-      ratio = rs12_split_ratio_tab[i].ratio;
+      cut0 = rs12_split_ratio_tab[i].cut[0];
+      cut1 = rs12_split_ratio_tab[i].cut[1];
       break;
     }
 
   if(solo)
-    s = 1024;
-  else if(y1 >= y0)
-    s = y0 + (((y1 - y0 + 1) * ratio) >> 8);
-  psx_gpu->split_y = s;
-  if(psx_gpu->split_mode == SPLIT_TOP)
   {
-    psx_gpu->viewport_start_y = y0;
-    psx_gpu->viewport_end_y = y1 < s - 1 ? y1 : s - 1;
+    lo = idx == 0 ? 0 : 1024;
+    hi = 1024;
   }
   else
   {
-    psx_gpu->viewport_start_y = y0 > s ? y0 : s;
-    psx_gpu->viewport_end_y = y1;
+    s32 h = y1 >= y0 ? y1 - y0 + 1 : 0;
+    s32 b1 = y0 + ((h * cut0) >> 8);
+    s32 b2 = n > 2 ? y0 + ((h * cut1) >> 8) : 1024;
+    lo = idx == 0 ? 0 : idx == 1 ? b1 : b2;
+    hi = idx == n - 1 ? 1024 : idx == 0 ? b1 : b2;
   }
+  psx_gpu->split_y0 = lo;
+  psx_gpu->split_y1 = hi;
+  psx_gpu->viewport_start_y = y0 > lo ? y0 : lo;
+  psx_gpu->viewport_end_y = y1 < hi - 1 ? y1 : hi - 1;
   psx_gpu->split_set = 1;
 }
 
@@ -796,11 +810,94 @@ static noinline int split_check(psx_gpu_struct *psx_gpu, const u32 *list,
   return 0;
 }
 
-// ReSys12: split_check() marked for the sampling profiler (stage 4)
+// ReSys12: the instances make the same decision at every drawing command of a chunk, so it is made once: the k-th
+// drawing command is decided by whichever instance gets there first, under a lock and in order (k only after
+// k - 1), with the chunk's state (written / CLUT rects, pages read, memo) of the instance that decided last, copied
+// over when another one takes the next decision. The others read the decision and apply its effect on themselves
+// (the band at the first command). split_shared_begin: the caller, before the instances parse a chunk;
+// split_shared_end: after they are joined, the chunk's state back to the main instance
+#define SPLIT_DEC_MAX 4096
+static struct {
+  volatile u32 done;            // decisions made
+  volatile u32 lock;
+  psx_gpu_struct *volatile owner; // instance holding the chunk's state
+  u8 dec[SPLIT_DEC_MAX];        // 0 go on, 1 end the chunk, 2 go on and the chunk is solo (first command)
+} s_split_sh;
+static u32 s_split_k[SPLIT_MAX + 2]; // per instance (split_mode): drawing commands met in the chunk
+
+static void split_take_state(psx_gpu_struct *d, const psx_gpu_struct *o)
+{
+  memcpy(d->split_w, o->split_w, sizeof(d->split_w));
+  memcpy(d->split_c, o->split_c, sizeof(d->split_c));
+  d->split_nw = o->split_nw;
+  d->split_nc = o->split_nc;
+  d->split_read_pages = o->split_read_pages;
+  d->split_refresh = o->split_refresh;
+  d->split_ver = o->split_ver;
+  d->split_fast_ver = o->split_fast_ver;
+  d->split_fast_tpage = o->split_fast_tpage;
+  d->split_fast_clut = o->split_fast_clut;
+  d->split_fast_tw = o->split_fast_tw;
+  memcpy(d->split_fast_wr, o->split_fast_wr, sizeof(d->split_fast_wr));
+}
+
+static void split_shared_begin(void)
+{
+  s_split_sh.done = 0;
+  s_split_sh.lock = 0;
+  s_split_sh.owner = NULL;
+  __sync_synchronize();
+}
+
+static void split_shared_end(psx_gpu_struct *main)
+{
+  psx_gpu_struct *const o = s_split_sh.owner;
+  if (o && o != main)
+    split_take_state(main, o);
+}
+
+static int split_decide(psx_gpu_struct *psx_gpu, const u32 *list, u32 cmd)
+{
+  const u32 k = s_split_k[psx_gpu->split_mode]++;
+  u32 d;
+  if (k >= SPLIT_DEC_MAX)
+    return 1; // (every instance ends the chunk here)
+  for (;;) {
+    if (k < __atomic_load_n(&s_split_sh.done, __ATOMIC_ACQUIRE)) {
+      d = s_split_sh.dec[k];
+      break;
+    }
+    if (__sync_bool_compare_and_swap(&s_split_sh.lock, 0, 1)) {
+      if (s_split_sh.done == k) {
+        psx_gpu_struct *const o = s_split_sh.owner;
+        if (o && o != psx_gpu)
+          split_take_state(psx_gpu, o);
+        s_split_sh.owner = psx_gpu;
+        const int was_set = psx_gpu->split_set;
+        const int r = split_check(psx_gpu, list, cmd);
+        s_split_sh.dec[k] = r ? 1 : (!was_set && psx_gpu->split_solo) ? 2 : 0;
+        __atomic_store_n(&s_split_sh.done, k + 1, __ATOMIC_RELEASE);
+        __atomic_store_n(&s_split_sh.lock, 0, __ATOMIC_RELEASE);
+        return r; // (split_check applied the band to this instance)
+      }
+      __atomic_store_n(&s_split_sh.lock, 0, __ATOMIC_RELEASE);
+    }
+  }
+  if (d == 1)
+    return 1;
+  if (!psx_gpu->split_set)
+  {
+    split_apply_band(psx_gpu, d == 2);
+    psx_gpu->split_solo = d == 2;
+  }
+  return 0;
+}
+
+// ReSys12: the decision marked for the sampling profiler (stage 4)
 static inline int split_check_staged(psx_gpu_struct *psx_gpu, const u32 *list, u32 cmd)
 {
   RS12_STAGE(4);
-  const int r = split_check(psx_gpu, list, cmd);
+  const int r = split_decide(psx_gpu, list, cmd);
   RS12_STAGE(0);
   return r;
 }
@@ -830,6 +927,7 @@ u32 gpu_parse(psx_gpu_struct *psx_gpu, u32 *list, u32 size, u32 *ex_regs,
     psx_gpu->split_nc = 0;
     psx_gpu->split_read_pages = 0;
     psx_gpu->split_ver++;
+    s_split_k[psx_gpu->split_mode] = 0;
   }
 
   for(; list < list_end; list += 1 + command_length)

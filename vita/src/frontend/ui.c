@@ -103,7 +103,74 @@ struct UiCanvas {
 	Rect dirty;        // area changed since the last commit
 	Rect hist[NBUF];   // area per commit (to know what changed since texture i last got data)
 	int full[NBUF];    // whole texture not yet in sync
+	int cy0, cy1;      // drawing rows limit (ui_clip_y; rect, line, circle, text)
 };
+
+static void dirty_add(UiCanvas *c, int x0, int y0, int x1, int y1);
+void ui_image(UiCanvas *c, const uint8_t *rgba, int w, int h, unsigned level)
+{
+	if (!c || !rgba || w <= 0 || h <= 0)
+		return;
+	// bilinear (smooth, not blocky), worked out once for this image, size and level, then copied
+	static uint32_t *cache;
+	static const uint8_t *c_src;
+	static int c_w, c_h;
+	static unsigned c_level;
+	if (!cache || c_src != rgba || c_w != c->w || c_h != c->h || c_level != level) {
+		free(cache);
+		cache = (uint32_t *)malloc((size_t)c->w * c->h * 4);
+		if (!cache)
+			return;
+		c_src = rgba; c_w = c->w; c_h = c->h; c_level = level;
+		for (int y = 0; y < c->h; y++) {
+			// source position of the pixel centre, 8 fractional bits
+			int sy = (int)(((2 * y + 1) * h * 128) / c->h) - 128;
+			if (sy < 0) sy = 0;
+			int y0 = sy >> 8, fy = sy & 255, y1 = y0 + 1 < h ? y0 + 1 : h - 1;
+			if (y0 >= h) { y0 = y1 = h - 1; fy = 0; }
+			const uint8_t *r0 = rgba + (size_t)y0 * w * 4, *r1 = rgba + (size_t)y1 * w * 4;
+			uint32_t *o = cache + (size_t)y * c->w;
+			for (int x = 0; x < c->w; x++) {
+				int sx = (int)(((2 * x + 1) * w * 128) / c->w) - 128;
+				if (sx < 0) sx = 0;
+				int x0 = sx >> 8, fx = sx & 255, x1 = x0 + 1 < w ? x0 + 1 : w - 1;
+				if (x0 >= w) { x0 = x1 = w - 1; fx = 0; }
+				const uint8_t *a = r0 + x0 * 4, *b = r0 + x1 * 4, *cc = r1 + x0 * 4, *d = r1 + x1 * 4;
+				uint32_t px = 0xFF000000u;
+				for (int k = 0; k < 3; k++) {
+					const unsigned top = a[k] * (256 - fx) + b[k] * fx, bot = cc[k] * (256 - fx) + d[k] * fx;
+					const unsigned v = (top * (256 - fy) + bot * fy) >> 16;
+					px |= (v * level >> 8) << (8 * k);
+				}
+				o[x] = px;
+			}
+		}
+	}
+	memcpy(c->px, cache, (size_t)c->w * c->h * 4);
+	dirty_add(c, 0, 0, c->w, c->h);
+}
+
+void ui_blit(UiCanvas *c, const uint32_t *px)
+{
+	if (!c || !px)
+		return;
+	memcpy(c->px, px, (size_t)c->w * c->h * 4);
+	dirty_add(c, 0, 0, c->w, c->h);
+}
+void ui_blit_rect(UiCanvas *c, const uint32_t *px, int x, int y, int w, int h)
+{
+	if (!c || !px)
+		return;
+	if (x < 0) { w += x; x = 0; }
+	if (y < 0) { h += y; y = 0; }
+	if (x + w > c->w) w = c->w - x;
+	if (y + h > c->h) h = c->h - y;
+	if (w <= 0 || h <= 0)
+		return;
+	for (int yy = y; yy < y + h; yy++)
+		memcpy(c->px + (size_t)yy * c->w + x, px + (size_t)yy * c->w + x, (size_t)w * 4);
+	dirty_add(c, x, y, x + w, y + h);
+}
 
 static void dirty_add(UiCanvas *c, int x0, int y0, int x1, int y1)
 {
@@ -133,6 +200,8 @@ UiCanvas *ui_canvas(int slot, int x, int y, int w, int h)
 	c->w = w;
 	c->h = h;
 	c->px = (uint32_t *)calloc((size_t)w * h, 4);
+	c->cy0 = 0;
+	c->cy1 = h;
 	for (int i = 0; i < NBUF; i++) {
 		c->tex[i] = rs12_video_tex(w, h);
 		c->full[i] = 1;
@@ -140,6 +209,13 @@ UiCanvas *ui_canvas(int slot, int x, int y, int w, int h)
 	c->cur = -1;
 	RS12_LOG("ui: canvas slot %d %dx%d tex %p %p %p", slot, w, h, (void *)c->tex[0], (void *)c->tex[1], (void *)c->tex[2]);
 	return c;
+}
+
+uint32_t *ui_pixels(UiCanvas *c) { return c->px; }
+void ui_clip_y(UiCanvas *c, int y0, int y1)
+{
+	c->cy0 = y0 < 0 ? 0 : y0;
+	c->cy1 = y1 > c->h ? c->h : y1;
 }
 
 void ui_canvas_move(UiCanvas *c, int x, int y)
@@ -152,6 +228,22 @@ void ui_clear(UiCanvas *c)
 {
 	memset(c->px, 0, (size_t)c->w * c->h * 4);
 	dirty_add(c, 0, 0, c->w, c->h);
+}
+
+// rectangle set to colour col (replaced, not blended; premultiplied here): no reads, as fast as a clear
+static inline uint32_t premul(uint32_t col, unsigned cov);
+void ui_fill(UiCanvas *c, int x, int y, int w, int h, uint32_t col)
+{
+	int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y, x1 = x + w > c->w ? c->w : x + w, y1 = y + h > c->h ? c->h : y + h;
+	if (x1 <= x0 || y1 <= y0)
+		return;
+	const uint32_t s = premul(col, 255);
+	for (int yy = y0; yy < y1; yy++) {
+		uint32_t *row = c->px + (size_t)yy * c->w;
+		for (int xx = x0; xx < x1; xx++)
+			row[xx] = s;
+	}
+	dirty_add(c, x0, y0, x1, y1);
 }
 
 void ui_clear_rect(UiCanvas *c, int x, int y, int w, int h)
@@ -234,11 +326,19 @@ static inline void blend(uint32_t *d, uint32_t col, unsigned cov)
 
 void ui_rect(UiCanvas *c, int x, int y, int w, int h, uint32_t col)
 {
-	int x0 = x < 0 ? 0 : x, y0 = y < 0 ? 0 : y, x1 = x + w > c->w ? c->w : x + w, y1 = y + h > c->h ? c->h : y + h;
+	int x0 = x < 0 ? 0 : x, y0 = y < c->cy0 ? c->cy0 : y, x1 = x + w > c->w ? c->w : x + w, y1 = y + h > c->cy1 ? c->cy1 : y + h;
 	if (x1 <= x0 || y1 <= y0)
 		return;
 	dirty_add(c, x0, y0, x1, y1);
 	const uint32_t s = premul(col, 255);
+	if ((s >> 24) == 0xFF) { // opaque: a plain fill (no reads)
+		for (int yy = y0; yy < y1; yy++) {
+			uint32_t *row = c->px + (size_t)yy * c->w;
+			for (int xx = x0; xx < x1; xx++)
+				row[xx] = s;
+		}
+		return;
+	}
 	for (int yy = y0; yy < y1; yy++) {
 		uint32_t *row = c->px + (size_t)yy * c->w;
 		uint32_t memo_in = row[x0] ^ 1, memo_out = 0;
@@ -260,9 +360,9 @@ void ui_line(UiCanvas *c, float x0, float y0, float x1, float y1, float width, u
 	int bx0 = (int)floorf((x0 < x1 ? x0 : x1) - hw - 1), bx1 = (int)ceilf((x0 > x1 ? x0 : x1) + hw + 1);
 	int by0 = (int)floorf((y0 < y1 ? y0 : y1) - hw - 1), by1 = (int)ceilf((y0 > y1 ? y0 : y1) + hw + 1);
 	if (bx0 < 0) bx0 = 0;
-	if (by0 < 0) by0 = 0;
+	if (by0 < c->cy0) by0 = c->cy0;
 	if (bx1 > c->w) bx1 = c->w;
-	if (by1 > c->h) by1 = c->h;
+	if (by1 > c->cy1) by1 = c->cy1;
 	dirty_add(c, bx0, by0, bx1, by1);
 	const float dx = x1 - x0, dy = y1 - y0, len2 = dx * dx + dy * dy;
 	for (int y = by0; y < by1; y++)
@@ -285,9 +385,9 @@ void ui_circle(UiCanvas *c, float cx, float cy, float r, uint32_t col)
 {
 	int bx0 = (int)floorf(cx - r - 1), bx1 = (int)ceilf(cx + r + 1), by0 = (int)floorf(cy - r - 1), by1 = (int)ceilf(cy + r + 1);
 	if (bx0 < 0) bx0 = 0;
-	if (by0 < 0) by0 = 0;
+	if (by0 < c->cy0) by0 = c->cy0;
 	if (bx1 > c->w) bx1 = c->w;
-	if (by1 > c->h) by1 = c->h;
+	if (by1 > c->cy1) by1 = c->cy1;
 	dirty_add(c, bx0, by0, bx1, by1);
 	for (int y = by0; y < by1; y++)
 		for (int x = bx0; x < bx1; x++) {
@@ -332,66 +432,96 @@ int ui_text_width(float scale, const char *s)
 	return (int)(w + 0.5f);
 }
 
-// ---- per-scale glyphs (built once with bilinear scaling on first use: the menu uses only 4 scales) ----
-typedef struct {
-	float scale;
-	uint8_t *px[96];
-	int w[96], h[96];
-} ScaledSet;
-static ScaledSet s_scaled[8];
-static int s_nscaled;
-
-static const ScaledSet *scaled_set(float scale)
-{
-	for (int i = 0; i < s_nscaled; i++)
-		if (s_scaled[i].scale == scale)
-			return &s_scaled[i];
-	if (s_nscaled >= 8)
-		return NULL;
-	ScaledSet *ss = &s_scaled[s_nscaled++];
-	ss->scale = scale;
-	const float inv = 1.0f / scale;
-	for (int k = 0; k < 96; k++) {
-		const Glyph *g = &s_glyph[k];
-		if (!g->px)
-			continue;
-		const int w = (int)ceilf(g->w * scale) + 1, h = (int)ceilf(g->h * scale) + 1;
-		uint8_t *o = (uint8_t *)calloc((size_t)w * h, 1);
-		for (int y = 0; y < h; y++) {
-			const float sy = ((float)y + 0.5f) * inv - 0.5f;
-			const int iy = (int)floorf(sy);
-			const float fy = sy - (float)iy;
-			for (int x = 0; x < w; x++) {
-				const float sx = ((float)x + 0.5f) * inv - 0.5f;
-				const int ix = (int)floorf(sx);
-				const float fx = sx - (float)ix;
-				float a = 0;
-				for (int q = 0; q < 4; q++) {
-					const int xx = ix + (q & 1), yy = iy + (q >> 1);
-					if (xx < 0 || yy < 0 || xx >= g->w || yy >= g->h)
-						continue;
-					a += ((q & 1) ? fx : 1 - fx) * ((q >> 1) ? fy : 1 - fy) * g->px[yy * g->w + xx];
-				}
-				o[y * w + x] = (uint8_t)(a > 255 ? 255 : a);
-			}
-		}
-		ss->px[k] = o;
-		ss->w[k] = w;
-		ss->h[k] = h;
-	}
-	return ss;
-}
-
 int ui_text(UiCanvas *c, int x, int y, uint32_t col, float scale, const char *s)
 {
 	return ui_text_clip(c, x, y, col, scale, s, 0, c->w);
+}
+
+// scaled glyphs: made once per scale and quarter-pixel phase, by the same bilinear sampling as before. Filtering every
+// pixel at each draw took 5 ms for one title line. The baseline stays exact (y offset baked in)
+#define SC_MAX 8
+#define SC_PH 4
+typedef struct { uint8_t *px; int w, h, dx, dy; } SGlyph;
+static float s_sc[SC_MAX];
+static int s_nsc;
+static SGlyph *s_sg[SC_MAX]; // 96 glyphs x SC_PH phases each
+
+static const SGlyph *scaled_glyph(int si, int k, int ph)
+{
+	SGlyph *sg = &s_sg[si][k * SC_PH + ph];
+	if (sg->px || sg->w < 0)
+		return sg;
+	const Glyph *g = &s_glyph[k];
+	const float scale = s_sc[si], inv = 1.0f / scale;
+	const float ox = (float)ph / SC_PH + g->left * scale, oy = -g->top * scale;
+	const int x0 = (int)floorf(ox), y0 = (int)floorf(oy), x1 = (int)ceilf(ox + g->w * scale), y1 = (int)ceilf(oy + g->h * scale);
+	sg->w = x1 - x0;
+	sg->h = y1 - y0;
+	sg->dx = x0;
+	sg->dy = y0;
+	sg->px = sg->w > 0 && sg->h > 0 ? (uint8_t *)malloc((size_t)sg->w * sg->h) : NULL;
+	if (!sg->px) {
+		sg->w = -1;
+		return sg;
+	}
+	for (int py = y0; py < y1; py++)
+		for (int px = x0; px < x1; px++) {
+			const float sx = ((float)px + 0.5f - ox) * inv - 0.5f, sy = ((float)py + 0.5f - oy) * inv - 0.5f;
+			const int ix = (int)floorf(sx), iy = (int)floorf(sy);
+			const float fx = sx - (float)ix, fy = sy - (float)iy;
+			float v = 0;
+			for (int q = 0; q < 4; q++) {
+				const int xx = ix + (q & 1), yy = iy + (q >> 1);
+				if (xx < 0 || yy < 0 || xx >= g->w || yy >= g->h)
+					continue;
+				v += ((q & 1) ? fx : 1 - fx) * ((q >> 1) ? fy : 1 - fy) * g->px[yy * g->w + xx];
+			}
+			const int a = (int)(v + 0.5f);
+			sg->px[(py - y0) * sg->w + (px - x0)] = (uint8_t)(a > 255 ? 255 : a);
+		}
+	return sg;
+}
+
+static void cov_blit(UiCanvas *c, const uint8_t *cov, int gw, int gh, int x0, int y0, uint32_t col, int cx0, int cx1)
+{
+	const int bx0 = x0 < cx0 ? cx0 : x0, bx1 = x0 + gw > cx1 ? cx1 : x0 + gw;
+	if (bx1 <= bx0)
+		return;
+	dirty_add(c, bx0, y0, bx1, y0 + gh);
+	for (int py = 0; py < gh; py++) {
+		const int yy = y0 + py;
+		if (yy < c->cy0 || yy >= c->cy1)
+			continue;
+		uint32_t *row = c->px + (size_t)yy * c->w;
+		const uint8_t *cr = cov + py * gw - x0;
+		for (int px = bx0; px < bx1; px++) {
+			const int a = cr[px];
+			if (a)
+				row[px] = over(row[px], premul(col, (uint8_t)a));
+		}
+	}
 }
 
 int ui_text_clip(UiCanvas *c, int x, int y, uint32_t col, float scale, const char *s, int cx0, int cx1)
 {
 	if (cx0 < 0) cx0 = 0;
 	if (cx1 > c->w) cx1 = c->w;
-	const ScaledSet *ss = scaled_set(scale);
+	// every letter sits on one exact baseline; scale 1 is the font's own bitmap
+	int si = -1;
+	if (scale != 1.0f) {
+		for (int i = 0; i < s_nsc && si < 0; i++)
+			if (s_sc[i] == scale)
+				si = i;
+		if (si < 0 && s_nsc < SC_MAX) {
+			s_sg[s_nsc] = (SGlyph *)calloc(96 * SC_PH, sizeof(SGlyph));
+			if (s_sg[s_nsc]) {
+				s_sc[s_nsc] = scale;
+				si = s_nsc++;
+			}
+		}
+		if (si < 0)
+			si = 0; // (more than SC_MAX sizes: not used by the menus)
+	}
 	float pen = (float)x;
 	for (; *s; s++) {
 		const unsigned ch = (unsigned char)*s;
@@ -399,24 +529,39 @@ int ui_text_clip(UiCanvas *c, int x, int y, uint32_t col, float scale, const cha
 			continue;
 		const int k = (int)ch - 32;
 		const Glyph *g = &s_glyph[k];
-		if (ss && ss->px[k]) {
-			const int gx = (int)floorf(pen + g->left * scale + 0.5f), gy = (int)floorf((float)y - g->top * scale + 0.5f);
-			const int w = ss->w[k], h = ss->h[k];
-			dirty_add(c, gx < cx0 ? cx0 : gx, gy, gx + w > cx1 ? cx1 : gx + w, gy + h);
-			for (int yy = 0; yy < h; yy++) {
-				const int py = gy + yy;
-				if (py < 0 || py >= c->h)
-					continue;
-				const uint8_t *src = ss->px[k] + yy * w;
-				uint32_t *row = c->px + (size_t)py * c->w;
-				for (int xx = 0; xx < w; xx++) {
-					const int px = gx + xx;
-					if (src[xx] && px >= cx0 && px < cx1)
-						row[px] = over(row[px], premul(col, src[xx]));
+		if (g->px) {
+			if (scale == 1.0f)
+				cov_blit(c, g->px, g->w, g->h, (int)floorf(pen + g->left + 0.5f), y - g->top, col, cx0, cx1);
+			else {
+				int ip = (int)floorf(pen), ph = (int)((pen - (float)ip) * SC_PH + 0.5f);
+				if (ph >= SC_PH) {
+					ph = 0;
+					ip++;
 				}
+				const SGlyph *sg = scaled_glyph(si, k, ph);
+				if (sg->px)
+					cov_blit(c, sg->px, sg->w, sg->h, ip + sg->dx, y + sg->dy, col, cx0, cx1);
 			}
 		}
 		pen += g->adv * scale;
 	}
 	return (int)(pen - x + 0.5f);
+}
+
+// rows of opaque colours (rows[y] for canvas row y, not premultiplied: alpha 0xFF) over a rectangle
+void ui_fill_rows(UiCanvas *c, const uint32_t *rows, int x, int y, int w, int h)
+{
+	if (x < 0) { w += x; x = 0; }
+	if (y < 0) { h += y; y = 0; }
+	if (x + w > c->w) w = c->w - x;
+	if (y + h > c->h) h = c->h - y;
+	if (w <= 0 || h <= 0)
+		return;
+	for (int yy = y; yy < y + h; yy++) {
+		uint32_t *row = c->px + (size_t)yy * c->w + x;
+		const uint32_t v = rows[yy];
+		for (int xx = 0; xx < w; xx++)
+			row[xx] = v;
+	}
+	dirty_add(c, x, y, x + w, y + h);
 }

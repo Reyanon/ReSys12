@@ -104,6 +104,9 @@ static void put_block(MemStream *s, const void *p, u32 len)
 	ms_write(s, p, len);
 }
 
+static size_t s_size;            // size of this game's states (s12_state_load checks it)
+static const void *s_size_game;  // the game s_size is for
+
 uint8_t *s12_state_save(size_t *size)
 {
 	MemStream ms;
@@ -167,6 +170,8 @@ uint8_t *s12_state_save(size_t *size)
 		return NULL;
 	}
 	*size = ms.size;
+	s_size = ms.size; // (the size check of s12_state_load)
+	s_size_game = s12.game;
 	return ms.buf;
 }
 
@@ -199,18 +204,26 @@ int s12_state_load(const uint8_t *buf, size_t size)
 	if (size < fixed)
 		return -1;
 	{ // ReSys12: the blocks are raw structs, so a state of another build or CPU (64-bit PC harness) differs in size:
-	  // refuse it here instead of half loading it
-		size_t cur = 0;
-		uint8_t *probe = s12_state_save(&cur);
-		free(probe);
-		if (!probe || cur != size)
+	  // refuse it here instead of half loading it. The size is the same for a game, so it is worked out (a whole
+	  // state written) once per game, not on every load
+		if (s_size_game != s12.game) {
+			size_t cur = 0;
+			uint8_t *probe = s12_state_save(&cur);
+			free(probe);
+			if (!probe)
+				return -1;
+			ms.pos = 0;
+			use_mem_stream();
+			ms_read(&ms, hdr, sizeof(hdr));
+		}
+		if (s_size != size)
 			return -1;
-		ms.pos = 0;
-		use_mem_stream();
-		ms_read(&ms, hdr, sizeof(hdr));
 	}
 
 	ms_read(&ms, psxRegs.ptrs.psxM, PSX_RAM_SIZE);
+	// ReSys12: code compiled from the RAM before the load must not run: the recompiler drops every block whose code
+	// bytes changed (unchanged ones stay, ADR-057). Upstream does this in ndrc_freeze, which these states do not use
+	psxCpu->Clear(0, PSX_RAM_SIZE / 4);
 	ms_read(&ms, psxRegs.ptrs.psxH, 0x10000);
 	ms_read(&ms, &psxRegs, offsetof(psxRegisters, gteBusyCycle));
 	CpuExtra cx;

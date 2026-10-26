@@ -36,17 +36,30 @@ typedef struct RS12Tex {
 	int w, h, stride; // stride in pixels
 } RS12Tex;
 RS12Tex *rs12_video_tex(int w, int h);
-// Layer slot 0..3 (higher on top): top-left w x h of texture t at screen (x, y) 1:1, premultiplied alpha blend. t NULL removes it
+// Layer slot 0..3 (higher on top; slot 4 = the touch keys, under all of them): top-left w x h of texture t at screen (x, y)
+// 1:1, premultiplied alpha blend. t NULL removes it
 void rs12_video_layer(int slot, RS12Tex *t, int x, int y, int w, int h);
+// layer slot opacity 0..1 (1 = as drawn)
+void rs12_video_layer_alpha(int slot, float a);
+// layer slot turned clockwise by rot * 90 degrees (drawn at x, y as an h x w rectangle when rot is odd)
+void rs12_video_layer_rot(int slot, int rot);
+// the app's LiveArea background as RGBA (malloc'd, NULL if missing)
+uint8_t *rs12_video_load_bg(int *w, int *h);
 
 // Screen size: aspect 0 = 4:3 (fit height), 1 = integer scale, 2 = full screen. smooth: 1 = bilinear, 0 = nearest (sharp)
 void rs12_video_set_mode(int aspect, int smooth);
 // Outside the game picture (4:3 / integer): border 0 = black, 1 = artwork (falls back to colour), 2 = colour (index 0..5)
 void rs12_video_set_border(int border, int border_color);
-// Border artwork: ux0:data/resys12/artwork/<set>.png, else <parent>.png. set NULL drops it
+// Border artwork: ux0:data/resys12/artwork/<set>.png, else <parent>.png, else the app's blank artwork. set NULL drops it
 void rs12_video_set_art(const char *set, const char *parent);
-// Monitor orientation of the game (MAME ROT90 = 90: the picture turned clockwise, a vertical screen), else 0
+// The game picture turned clockwise by 0, 90, 180 or 270 degrees (the game's monitor orientation, MAME ROT90 = 90,
+// plus the Rotate setting)
 void rs12_video_set_rotation(int rot);
+
+// Screen point (pixels) -> game picture fraction (0..1, the game's own orientation). 1 if the point is on the picture
+int rs12_video_screen_to_game(float sx, float sy, float *fx, float *fy);
+// where the game picture is on the screen (pixels); 0 before the first frame
+int rs12_video_picture_rect(int *x, int *y, int *w, int *h);
 
 // Test: draw the screen as rs12_video_present would and write it to a PPM (960x544) instead of showing it. 0 on success
 int rs12_video_capture_ppm(const char *path);

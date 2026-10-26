@@ -4,6 +4,9 @@
 
 #include <psp2/gxm.h>
 #include <psp2/kernel/threadmgr.h>
+#include <psp2/kernel/processmgr.h>
+#include <psp2/io/stat.h>
+#include <psp2/display.h>
 #include <vitaGL.h>
 #include <png.h>
 #include <stdio.h>
@@ -49,9 +52,36 @@ static int pick_free(void)
 	return s_draw; // cannot happen with NUM_TEX >= shown + previous + queued + drawn
 }
 
+// display latency (log): from vglSwapBuffers to the vblank that shows the frame (vitaGL display callback, called
+// on the display queue thread when the frame is put on screen)
+volatile uint32_t rs12_video_disp_sum, rs12_video_disp_n, rs12_video_disp_max;
+static volatile uint64_t s_swap_t[16];
+static volatile uint32_t s_swap_n, s_disp_n;
+static void display_cb(void *fb)
+{
+	(void)fb;
+	const uint64_t now = sceKernelGetProcessTimeWide();
+	const uint32_t k = s_disp_n++;
+	if (k < s_swap_n) {
+		const uint32_t d = (uint32_t)(now - s_swap_t[k % 16]);
+		rs12_video_disp_sum += d;
+		rs12_video_disp_n++;
+		if (d > rs12_video_disp_max)
+			rs12_video_disp_max = d;
+	}
+}
+
 void rs12_video_init(void)
 {
 	vglWaitVblankStart(GL_TRUE);
+	{ // measurements: ux0:data/resys12/dblbuf = two display buffers instead of vitaGL's three
+		SceIoStat st;
+		if (sceIoGetstat("ux0:data/resys12/dblbuf", &st) >= 0) {
+			vglUseTripleBuffering(GL_FALSE);
+			RS12_LOG("video: double buffering");
+		}
+	}
+	vglSetDisplayCallback(display_cb);
 	// keep the vitaGL garbage collector off CPU0 (emulation)
 	vglSetupGarbageCollector(0x10000100, SCE_KERNEL_CPU_MASK_USER_2);
 	vglInit(0x100000);
@@ -93,7 +123,13 @@ void rs12_video_init(void)
 void rs12_video_shutdown(void)
 {
 	glDeleteTextures(NUM_TEX, s_tex);
-	// vitaGL has no shutdown call; the process exit cleans up
+	// vitaGL has no shutdown call; the process exit cleans up the rest. Before a relaunch (sceAppMgrLoadExec) the GPU
+	// work and the display queue are drained first: a relaunch with flips still queued sometimes left the old process
+	// stuck exiting (the new one never started, error C1-2569-2)
+	extern SceGxmContext *gxm_context; // (vitaGL)
+	if (gxm_context)
+		sceGxmFinish(gxm_context);
+	sceGxmDisplayQueueFinish();
 }
 
 uint32_t *rs12_video_frame_begin(int w, int h)
@@ -126,10 +162,55 @@ void rs12_video_frame_field(int odd)
 }
 
 volatile uint32_t rs12_video_done, rs12_video_repeats, rs12_video_skips; // frames finished; presents with none new / several new
+volatile uint32_t rs12_video_qdepth; // sum of the frames waiting at each present (display latency, log)
+// display latency (log): emulated frames between the one that asked for the picture shown and the one just run
+volatile uint32_t rs12_video_lag_sum, rs12_video_lag_n, rs12_video_lag_max;
+static uint8_t s_tag[NUM_TEX];
+int rs12_video_lowlag; // show the newest frame when it is the one just emulated (see rs12_video_newest_tag)
+// pace the main loop on the vblank after each swap instead of on a full display queue: the frame swapped is shown at
+// the next vblank (~4 ms) instead of the one after (~20 ms, the queue always held the previous frame)
+int rs12_video_vsync_pace;
+int rs12_video_pace_forced; // set by a measurement file (ux0:data/resys12/vsyncpace): the menu setting is ignored
+// 2 = adaptive: as 1 while every frame is swapped before its vblank; a late frame falls back to the queue (no wait, so
+// the emulation loses no time), and after 10 s without lateness two vblank waits drain the queue again (one repeat)
+volatile uint32_t rs12_video_pace_falls, rs12_video_pace_resyncs, rs12_video_pace_low_frames;
+static void pace_adaptive(void)
+{
+	static int low, vc_start;
+	static uint64_t late_t;
+	const uint64_t now = sceKernelGetProcessTimeWide();
+	if (low) {
+		if (sceDisplayGetVcount() == vc_start) { // swapped before the next vblank: it shows there
+			sceDisplayWaitVblankStart();
+			vc_start = sceDisplayGetVcount();
+			rs12_video_pace_low_frames++;
+		} else {
+			low = 0;
+			late_t = now;
+			rs12_video_pace_falls++;
+		}
+	} else if (now - late_t > 10000000) {
+		sceDisplayWaitVblankStart(); // the frame queued before this one shows
+		sceDisplayWaitVblankStart(); // this one shows: the queue is empty
+		vc_start = sceDisplayGetVcount();
+		low = 1;
+		rs12_video_pace_resyncs++;
+	}
+}
+
+// tag of the newest finished frame (rs12_emu_frame of its flip), -1 if none waits
+int rs12_video_newest_tag(void)
+{
+	const uint32_t tail = s_qtail, head = s_qhead;
+	__sync_synchronize();
+	return head == tail ? -1 : s_tag[s_queue[(tail - 1) % QLEN]];
+}
 
 void rs12_video_frame_end(void)
 {
 	rs12_video_done++;
+	extern unsigned char rs12_vout_tag; // (vout_pl.c)
+	s_tag[s_draw] = rs12_vout_tag;
 	s_queue[s_qtail % QLEN] = s_draw;
 	__sync_synchronize();
 	s_qtail++;
@@ -265,10 +346,21 @@ static void draw_bar(float x0, float y0, float x1, float y1)
 	draw_quad(x0, y0, x1, y1, 0, 0);
 }
 
-static int s_rot; // 90: vertical game, the picture turned clockwise
+static int s_rot; // the game picture turned clockwise by s_rot * 90 degrees (a vertical game, or the Rotate setting)
 void rs12_video_set_rotation(int rot)
 {
-	s_rot = rot == 90 ? 90 : 0;
+	s_rot = ((rot % 360) + 360) % 360 / 90;
+}
+// texture corners top-left, top-right, bottom-left, bottom-right taken by the screen corners in turn, turned clockwise by
+// rot * 90 degrees (rot 1: the screen's top-left shows the picture's bottom-left)
+static void rot_uv(float *uv, float u1, float v1, int rot)
+{
+	const float tu[4] = { 0, u1, 0, u1 }, tv[4] = { 0, 0, v1, v1 };
+	static const int pick[4][4] = { { 0, 1, 2, 3 }, { 2, 0, 3, 1 }, { 3, 2, 1, 0 }, { 1, 3, 0, 2 } };
+	for (int k = 0; k < 4; k++) {
+		uv[2 * k] = tu[pick[rot & 3][k]];
+		uv[2 * k + 1] = tv[pick[rot & 3][k]];
+	}
 }
 
 // a cross with a gap in the middle, black outline: P1 red, P2 blue (aim in game picture coordinates)
@@ -280,7 +372,9 @@ static void draw_crosshairs(float px, float py, float pw, float ph)
 	for (int p = 0; p < 2; p++) {
 		if (!s_cross_on[p])
 			continue;
-		const float ax = s_rot ? 1.0f - s_cross_y[p] : s_cross_x[p], ay = s_rot ? s_cross_x[p] : s_cross_y[p];
+		const float fx = s_cross_x[p], fy = s_cross_y[p];
+		const float ax = s_rot == 1 ? 1.0f - fy : s_rot == 2 ? 1.0f - fx : s_rot == 3 ? fy : fx;
+		const float ay = s_rot == 1 ? fx : s_rot == 2 ? 1.0f - fy : s_rot == 3 ? 1.0f - fx : fy;
 		const float cx = px + ax * pw, cy = py + ay * ph, r = 14.0f, g = 4.0f, t = 1.5f;
 		for (int pass = 0; pass < 2; pass++) {
 			const float o = pass ? 0.0f : 1.5f; // outline first
@@ -324,10 +418,24 @@ RS12Tex *rs12_video_tex(int w, int h)
 	return t;
 }
 
-static struct { RS12Tex *t; int x, y, w, h; } s_layer[4];
+// slot 4 (the touch keys) is drawn first, under the menu, focus, notice and FPS slots 0-3
+#define NLAYER 5
+static struct { RS12Tex *t; int x, y, w, h, rot; float a; } s_layer[NLAYER] = { { .a = 1 }, { .a = 1 }, { .a = 1 }, { .a = 1 }, { .a = 1 } };
+// a layer's opacity (the blinking menu focus is a small layer of its own: the blink costs no CPU drawing)
+void rs12_video_layer_alpha(int slot, float a)
+{
+	if (slot >= 0 && slot < NLAYER)
+		s_layer[slot].a = a;
+}
+// a layer turned clockwise by rot * 90 degrees (the FPS box follows a Vita held upright)
+void rs12_video_layer_rot(int slot, int rot)
+{
+	if (slot >= 0 && slot < NLAYER)
+		s_layer[slot].rot = rot & 3;
+}
 void rs12_video_layer(int slot, RS12Tex *t, int x, int y, int w, int h)
 {
-	if (slot < 0 || slot >= 4)
+	if (slot < 0 || slot >= NLAYER)
 		return;
 	s_layer[slot].t = t;
 	s_layer[slot].x = x;
@@ -349,7 +457,8 @@ void rs12_video_set_border(int border, int border_color)
 	s_border_color = border_color;
 }
 
-// border artwork supplied by the user (not shipped): ux0:data/resys12/artwork/<set>.png, stretched to the screen
+// border artwork supplied by the user: ux0:data/resys12/artwork/<set>.png, stretched to the screen. Games without one get
+// the app's blank artwork (app0:assets/blankArtwork.png)
 static RS12Tex *s_art;
 static int s_art_w, s_art_h;
 static uint8_t *load_png(const char *path, int *w, int *h)
@@ -384,6 +493,10 @@ void rs12_video_set_art(const char *set, const char *parent)
 		snprintf(path, sizeof(path), "ux0:data/resys12/artwork/%s.png", parent);
 		b = load_png(path, &w, &h);
 	}
+	if (!b) { // no artwork for this game: the app's blank artwork, as it is
+		snprintf(path, sizeof(path), "app0:assets/blankArtwork.png");
+		b = load_png(path, &w, &h);
+	}
 	if (!b) {
 		RS12_LOG("video: %s artwork missing (Border Artwork falls back to the border colour)", set);
 		return;
@@ -411,6 +524,12 @@ void rs12_video_set_art(const char *set, const char *parent)
 	free(b);
 }
 
+// the app's LiveArea background (RGBA, malloc'd; NULL if missing): loading screen
+uint8_t *rs12_video_load_bg(int *w, int *h)
+{
+	return load_png("app0:sce_sys/livearea/contents/bg.png", w, h);
+}
+
 static void border_rgb(float *c)
 {
 	static const uint8_t col[6][3] = { { 0x14, 0x18, 0x3C }, { 0x28, 0x28, 0x2C }, { 0x48, 0x10, 0x14 },
@@ -419,6 +538,33 @@ static void border_rgb(float *c)
 	c[0] = col[k][0] / 255.0f;
 	c[1] = col[k][1] / 255.0f;
 	c[2] = col[k][2] / 255.0f;
+}
+
+static float s_pic_x, s_pic_y, s_pic_w = 960, s_pic_h = 544; // where the game picture was drawn last
+int rs12_video_screen_to_game(float sx, float sy, float *fx, float *fy)
+{
+	if (s_pic_w <= 0 || s_pic_h <= 0)
+		return 0;
+	const float ax = (sx - s_pic_x) / s_pic_w, ay = (sy - s_pic_y) / s_pic_h; // fraction of the picture on screen
+	// back through the rotation (the inverse of the crosshair mapping)
+	float gx = ax, gy = ay;
+	if (s_rot == 1) { gx = ay; gy = 1.0f - ax; }
+	else if (s_rot == 2) { gx = 1.0f - ax; gy = 1.0f - ay; }
+	else if (s_rot == 3) { gx = 1.0f - ay; gy = ax; }
+	*fx = gx;
+	*fy = gy;
+	return ax >= 0.0f && ax <= 1.0f && ay >= 0.0f && ay <= 1.0f;
+}
+
+int rs12_video_picture_rect(int *x, int *y, int *w, int *h)
+{
+	if (s_pic_w <= 0 || s_pic_h <= 0)
+		return 0;
+	*x = (int)s_pic_x;
+	*y = (int)s_pic_y;
+	*w = (int)s_pic_w;
+	*h = (int)s_pic_h;
+	return 1;
 }
 
 static void draw_scene(void)
@@ -434,7 +580,7 @@ static void draw_scene(void)
 	if (s_aspect == 1 && w > 0 && h > 0) { // integer scale
 		// hi-res width with one field (640x240): each line counts twice so the picture keeps its shape
 		const int lh = (w >= 512 && h <= 256) ? h * 2 : h;
-		const int sw = s_rot ? lh : w, sh = s_rot ? w : lh; // on screen (a vertical game: turned)
+		const int sw = (s_rot & 1) ? lh : w, sh = (s_rot & 1) ? w : lh; // on screen (turned a quarter: sides swap)
 		int k = 960 / sw < 544 / sh ? 960 / sw : 544 / sh;
 		if (k < 1)
 			k = 1;
@@ -445,17 +591,21 @@ static void draw_scene(void)
 		dh = 544.0f;
 	} else {
 		dh = 544.0f;
-		dw = s_rot ? dh * 3.0f / 4.0f : dh * 4.0f / 3.0f; // 4:3 monitor, on its side for a vertical game
+		dw = (s_rot & 1) ? dh * 3.0f / 4.0f : dh * 4.0f / 3.0f; // 4:3 monitor, on its side when turned a quarter
 	}
-	// the odd field sits half a field line lower (to the left on a turned picture)
+	// the odd field sits half a field line lower in the picture (turned with it)
 	float y_field = 0.0f, x_field = 0.0f;
 	if (i >= 0 && s_field[i] && h > 0) {
-		if (s_rot)
-			x_field = -dw / (2.0f * h);
+		if (s_rot & 1)
+			x_field = (s_rot == 1 ? -dw : dw) / (2.0f * h);
 		else
-			y_field = dh / (2.0f * h);
+			y_field = (s_rot == 2 ? -dh : dh) / (2.0f * h);
 	}
 	const float x0 = (960.0f - dw) * 0.5f + x_field, y0 = (544.0f - dh) * 0.5f + y_field;
+	s_pic_x = x0 - x_field;
+	s_pic_y = y0 - y_field;
+	s_pic_w = dw;
+	s_pic_h = dh;
 	const int use_art = i >= 0 && s_border == 1 && s_aspect != 2 && s_art && s_art_w > 0;
 	if (i >= 0 && s_border && s_aspect != 2 && !use_art) {
 		float c[3];
@@ -475,8 +625,8 @@ static void draw_scene(void)
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, f);
 		const float u1 = (float)w / RS12_VIDEO_TEX_W, v1 = (float)h / RS12_VIDEO_TEX_H;
 		if (s_rot) {
-			// clockwise: screen top-left shows the picture's bottom-left, top-right its top-left
-			const float uv[8] = { 0, v1, 0, 0, u1, v1, u1, 0 };
+			float uv[8];
+			rot_uv(uv, u1, v1, s_rot);
 			draw_quad_uv(x0, y0, x0 + dw, y0 + dh, uv);
 		} else
 			draw_quad(x0, y0, x0 + dw, y0 + dh, u1, v1);
@@ -492,7 +642,8 @@ static void draw_scene(void)
 	}
 	// overlay layers: premultiplied alpha
 	int blend = 0;
-	for (int k = 0; k < 4; k++) {
+	for (int o = 0; o < NLAYER; o++) {
+		const int k = o ? o - 1 : NLAYER - 1;
 		RS12Tex *t = s_layer[k].t;
 		if (!t)
 			continue;
@@ -503,7 +654,18 @@ static void draw_scene(void)
 		}
 		glBindTexture(GL_TEXTURE_2D, t->gl);
 		const float lx = (float)s_layer[k].x, ly = (float)s_layer[k].y, lw = (float)s_layer[k].w, lh = (float)s_layer[k].h;
-		draw_quad(lx, ly, lx + lw, ly + lh, lw / t->w, lh / t->h);
+		const float a = s_layer[k].a;
+		if (a < 1.0f) // premultiplied: every channel times the opacity
+			glColor4f(a, a, a, a);
+		if (s_layer[k].rot) { // turned: an h x w rectangle when a quarter turn
+			float uv[8];
+			rot_uv(uv, lw / t->w, lh / t->h, s_layer[k].rot);
+			const int odd = s_layer[k].rot & 1;
+			draw_quad_uv(lx, ly, lx + (odd ? lh : lw), ly + (odd ? lw : lh), uv);
+		} else
+			draw_quad(lx, ly, lx + lw, ly + lh, lw / t->w, lh / t->h);
+		if (a < 1.0f)
+			glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 	}
 	if (blend)
 		glDisable(GL_BLEND);
@@ -515,10 +677,16 @@ void rs12_video_present(void)
 	const uint32_t tail = s_qtail;
 	uint32_t head = s_qhead;
 	__sync_synchronize();
+	rs12_video_qdepth += tail - head;
 	if (head == tail)
 		rs12_video_repeats++;
 	else {
-		if (tail - head > 2) {
+		extern volatile unsigned int rs12_emu_frame;
+		if (rs12_video_lowlag && tail - head > 1 && s_tag[s_queue[(tail - 1) % QLEN]] == (uint8_t)rs12_emu_frame) {
+			// low latency: the frame just emulated is ready, show it (after a late frame this drops one, once)
+			rs12_video_skips += tail - head - 1;
+			head = tail - 1;
+		} else if (tail - head > 2) {
 			rs12_video_skips += tail - head - 2;
 			head = tail - 2;
 		}
@@ -526,9 +694,21 @@ void rs12_video_present(void)
 		s_shown = s_queue[head % QLEN];
 		__sync_synchronize();
 		s_qhead = head + 1;
+		extern volatile unsigned int rs12_emu_frame;
+		const uint32_t lag = (uint8_t)(rs12_emu_frame - s_tag[s_shown]);
+		rs12_video_lag_sum += lag;
+		rs12_video_lag_n++;
+		if (lag > rs12_video_lag_max)
+			rs12_video_lag_max = lag;
 	}
 	draw_scene();
+	s_swap_t[s_swap_n % 16] = sceKernelGetProcessTimeWide();
+	s_swap_n++;
 	vglSwapBuffers(GL_FALSE);
+	if (rs12_video_vsync_pace == 2)
+		pace_adaptive();
+	else if (rs12_video_vsync_pace)
+		sceDisplayWaitVblankStart(); // (the frame goes on screen at this vblank; the next one starts right after it)
 }
 
 int rs12_video_capture_ppm(const char *path)

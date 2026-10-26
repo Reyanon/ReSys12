@@ -16,13 +16,24 @@ void ui_fini(void);
 // canvas: w×h at screen position x,y (overlay layer slot 0..3, higher number on top)
 UiCanvas *ui_canvas(int slot, int x, int y, int w, int h);
 void ui_canvas_move(UiCanvas *c, int x, int y);
+// drawing limited to rows [y0, y1) (rect, line, circle, text; ui_clip_y(c, 0, h) = whole canvas)
+void ui_clip_y(UiCanvas *c, int y0, int y1);
+uint32_t *ui_pixels(UiCanvas *c);              // the canvas pixels (premultiplied, w x h)
 void ui_clear(UiCanvas *c);                    // to transparent
 void ui_clear_rect(UiCanvas *c, int x, int y, int w, int h);
+void ui_fill(UiCanvas *c, int x, int y, int w, int h, uint32_t col); // set to col (no blending)
 void ui_commit(UiCanvas *c);                   // show drawn content (from the next display)
 void ui_hide(UiCanvas *c);                     // remove from screen
 
 // drawing (coords inside the canvas, alpha blended)
 void ui_rect(UiCanvas *c, int x, int y, int w, int h, uint32_t col);
+// whole canvas from an RGBA image (stretched, nearest), colours times level / 256, opaque
+void ui_image(UiCanvas *c, const uint8_t *rgba, int w, int h, unsigned level);
+// canvas-sized premultiplied pixels (c->w x c->h) copied in: whole canvas, or one rectangle of it
+void ui_blit(UiCanvas *c, const uint32_t *px);
+void ui_blit_rect(UiCanvas *c, const uint32_t *px, int x, int y, int w, int h);
+// rows of opaque colours: rows[y] is the colour of canvas row y (a vertical gradient without reading memory)
+void ui_fill_rows(UiCanvas *c, const uint32_t *rows, int x, int y, int w, int h);
 void ui_line(UiCanvas *c, float x0, float y0, float x1, float y1, float width, uint32_t col);
 void ui_circle(UiCanvas *c, float cx, float cy, float r, uint32_t col);
 // text: y = baseline (same as vita2d_pgf_draw_text). Returns the drawn width

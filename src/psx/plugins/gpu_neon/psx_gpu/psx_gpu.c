@@ -5291,8 +5291,10 @@ void initialize_psx_gpu(psx_gpu_struct *psx_gpu, u16 *vram)
   psx_gpu->logical_vy0 = psx_gpu->logical_vy1 = 0;
   psx_gpu->split_mode = SPLIT_OFF;
   psx_gpu->split_set = 0;
-  psx_gpu->split_ratio = 128;
-  psx_gpu->split_y = 0;
+  psx_gpu->split_cut[0] = 128;
+  psx_gpu->split_cut[1] = 256;
+  psx_gpu->split_y0 = psx_gpu->split_y1 = 0;
+  psx_gpu->split_n = 2;
   psx_gpu->split_solo = 0;
   psx_gpu->split_nw = 0;
   psx_gpu->split_nc = 0;

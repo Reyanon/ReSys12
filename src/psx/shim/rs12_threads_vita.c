@@ -9,6 +9,8 @@
 #include "../frontend/pcsxr-threads.h"
 
 int pcsxr_sthread_core_count = 3;
+int rs12_drc_cpu_mask = 0x80000; // CPU3 (shared with the system; CPU1 has the sound and the GPU helper: audio
+// underruns there while compiling); the frontend may change it before the core starts
 
 struct sthread {
 	SceUID uid;
@@ -46,7 +48,12 @@ struct sthread *pcsxr_sthread_create(void (*thread_func)(void *), enum pcsxr_thr
 	// Recompiler (compiles blocks while the emulation thread interprets them): CPU1 below the sound thread (0x48) and
 	// above the split render helper (0x4A, whose share the GPU thread takes over when the helper is late)
 	const int prio = type == PCSXRT_GPU ? 65 : type == PCSXRT_DRC ? 0x49 : 0x60;
-	const int cpu = type == PCSXRT_GPU ? SCE_KERNEL_CPU_MASK_USER_2 : SCE_KERNEL_CPU_MASK_USER_1;
+	int cpu = type == PCSXRT_GPU ? SCE_KERNEL_CPU_MASK_USER_2 : SCE_KERNEL_CPU_MASK_USER_1;
+	if (type == PCSXRT_DRC) { // measurements: the compiler's CPU mask from ux0:data/resys12/drccpu (0x80000 = CPU3)
+		extern int rs12_drc_cpu_mask;
+		if (rs12_drc_cpu_mask)
+			cpu = rs12_drc_cpu_mask;
+	}
 	t->uid = sceKernelCreateThread("rs12_psxthr", thread_entry, prio, 0x20000, 0, cpu, NULL);
 	if (t->uid < 0) {
 		free(t);
@@ -123,25 +130,34 @@ void scond_signal(struct scond *c)
 }
 
 // ---- ReSys12: split rendering helper (gpu_neon psx_gpu_if.c) ----
-// One job at a time: the renderer thread publishes a job (kick), renders its own band, then
-// finishes: if the helper has not picked the job up yet, the renderer runs it itself ("stolen"),
-// otherwise it waits for it. Both sides spin briefly before sleeping on a semaphore, as jobs come
-// every few hundred microseconds while a frame is drawn and a kernel wakeup costs tens of them.
-// The helper runs on CPU1 below the sound thread (0x48), which must keep its priority.
+// One job at a time per helper: the renderer thread publishes the jobs (kick), renders its own band,
+// then finishes each: if a helper has not picked its job up yet, the renderer runs it itself
+// ("stolen"), otherwise it waits for it. Both sides spin briefly before sleeping on a semaphore, as
+// jobs come every few hundred microseconds while a frame is drawn and a kernel wakeup costs tens of
+// them. The first helper runs on CPU1 below the sound thread (0x48), which must keep its priority;
+// the second (three bands) on CPU3.
 #include <stdint.h>
 #include <psp2/kernel/processmgr.h>
 
-#define SPLIT_HELPER_PRIO   0x4A
+#define SPLIT_HELPER_PRIO   0x4A // first helper (CPU1)
+#define SPLIT_HELPER2_PRIO  0x4A // second helper (CPU3): below the recompiler (0x49), which holds the code cache
+                                 // while it compiles (the emulation interprets meanwhile); a late job is taken
+                                 // back by the renderer
 #define SPLIT_WORKER_SPIN_US 600 // helper: spin this long after the last job before sleeping
 #define SPLIT_MAIN_SPIN_US   300 // renderer: spin this long for the helper before sleeping
+#define SPLIT_WORKERS 2
 
-extern volatile uint64_t rs12_gpu_split_busy_us; // psx_gpu_if.c
+extern volatile uint64_t rs12_gpu_split_busy_us, rs12_gpu_split_busy_c_us; // psx_gpu_if.c
 
-static void (*s_split_job)(void);
-static volatile uint32_t s_split_req, s_split_claim, s_split_done;
-static volatile int s_split_worker_sleeping, s_split_main_sleeping;
-static volatile uint64_t s_split_job_us;
-static SceUID s_split_go = -1, s_split_fin = -1;
+typedef struct {
+	void (*job)(int);
+	volatile uint32_t req, claim, done;
+	volatile int worker_sleeping, main_sleeping;
+	volatile uint64_t job_us;
+	SceUID go, fin;
+} split_worker;
+static split_worker s_sw[SPLIT_WORKERS] = { { .go = -1, .fin = -1 }, { .go = -1, .fin = -1 } };
+static SceUID s_sw_tid[SPLIT_WORKERS];
 
 uint64_t rs12_split_now_us(void)
 {
@@ -153,43 +169,51 @@ static inline uint32_t split_load(volatile uint32_t *p)
 	return __atomic_load_n(p, __ATOMIC_ACQUIRE);
 }
 
+// run worker w's pending job request req on this thread (claimed by the caller)
+static void split_run(int w, uint32_t req, volatile uint64_t *busy)
+{
+	split_worker *sw = &s_sw[w];
+	const uint64_t t0 = sceKernelGetProcessTimeWide();
+	sw->job(w);
+	const uint64_t dt = sceKernelGetProcessTimeWide() - t0;
+	sw->job_us = dt;
+	*busy += dt;
+	__atomic_store_n(&sw->done, req, __ATOMIC_RELEASE);
+	__sync_synchronize();
+	if (sw->main_sleeping)
+		sceKernelSignalSema(sw->fin, 1);
+}
+
 static int split_worker_thread(SceSize args, void *argp)
 {
+	const int w = *(int *)argp;
+	split_worker *sw = &s_sw[w];
+	volatile uint64_t *busy = w == 0 ? &rs12_gpu_split_busy_us : &rs12_gpu_split_busy_c_us;
 	uint32_t seen = 0;
 	(void)args;
-	(void)argp;
 	for (;;) {
-		uint32_t req = split_load(&s_split_req);
+		uint32_t req = split_load(&sw->req);
 		if (req == seen) {
 			const uint64_t t0 = sceKernelGetProcessTimeWide();
 			unsigned n = 0;
-			while ((req = split_load(&s_split_req)) == seen) {
+			while ((req = split_load(&sw->req)) == seen) {
 				if ((++n & 63) == 0 && sceKernelGetProcessTimeWide() - t0 > SPLIT_WORKER_SPIN_US)
 					break;
 			}
 			if (req == seen) {
-				s_split_worker_sleeping = 1;
+				sw->worker_sleeping = 1;
 				__sync_synchronize();
-				if (split_load(&s_split_req) == seen) {
+				if (split_load(&sw->req) == seen) {
 					SceUInt timeout = 100000;
-					sceKernelWaitSema(s_split_go, 1, &timeout);
+					sceKernelWaitSema(sw->go, 1, &timeout);
 				}
-				s_split_worker_sleeping = 0;
+				sw->worker_sleeping = 0;
 				continue;
 			}
 		}
 		seen = req;
-		if (__sync_bool_compare_and_swap(&s_split_claim, req - 1, req)) {
-			const uint64_t t0 = sceKernelGetProcessTimeWide();
-			s_split_job();
-			const uint64_t dt = sceKernelGetProcessTimeWide() - t0;
-			s_split_job_us = dt;
-			rs12_gpu_split_busy_us += dt;
-			__atomic_store_n(&s_split_done, req, __ATOMIC_RELEASE);
-			__sync_synchronize();
-			if (s_split_main_sleeping)
-				sceKernelSignalSema(s_split_fin, 1);
-		}
+		if (__sync_bool_compare_and_swap(&sw->claim, req - 1, req))
+			split_run(w, req, busy);
 	}
 	return 0;
 }
@@ -199,74 +223,85 @@ static int split_worker_thread(SceSize args, void *argp)
 volatile uint64_t rs12_gpu_split_help_us;
 int rs12_split_worker_help(void)
 {
-	const uint32_t req = split_load(&s_split_req);
-	if (!s_split_job || split_load(&s_split_done) == req)
-		return 0;
-	if (!__sync_bool_compare_and_swap(&s_split_claim, req - 1, req))
-		return 0;
-	const uint64_t t0 = sceKernelGetProcessTimeWide();
-	s_split_job();
-	const uint64_t dt = sceKernelGetProcessTimeWide() - t0;
-	s_split_job_us = dt;
-	rs12_gpu_split_help_us += dt;
-	__atomic_store_n(&s_split_done, req, __ATOMIC_RELEASE);
-	__sync_synchronize();
-	if (s_split_main_sleeping)
-		sceKernelSignalSema(s_split_fin, 1);
-	return 1;
+	for (int w = 0; w < SPLIT_WORKERS; w++) {
+		split_worker *sw = &s_sw[w];
+		const uint32_t req = split_load(&sw->req);
+		if (!sw->job || split_load(&sw->done) == req)
+			continue;
+		if (!__sync_bool_compare_and_swap(&sw->claim, req - 1, req))
+			continue;
+		split_run(w, req, &rs12_gpu_split_help_us);
+		return 1;
+	}
+	return 0;
 }
 
-// returns 1 if the helper thread runs
-int rs12_split_worker_start(void (*job)(void))
+// worker w on CPU cpu (1 or 3); returns 1 if its thread runs
+int rs12_split_worker_start(int w, void (*job)(int), int cpu)
 {
-	s_split_job = job;
-	s_split_go = sceKernelCreateSema("rs12_split_go", 0, 0, 1, NULL);
-	s_split_fin = sceKernelCreateSema("rs12_split_fin", 0, 0, 1, NULL);
-	if (s_split_go < 0 || s_split_fin < 0)
+	static int idx[SPLIT_WORKERS] = { 0, 1 };
+	if (w < 0 || w >= SPLIT_WORKERS)
 		return 0;
-	SceUID t = sceKernelCreateThread("rs12_gpusplit", split_worker_thread, SPLIT_HELPER_PRIO, 0x20000, 0,
-		SCE_KERNEL_CPU_MASK_USER_1, NULL);
+	split_worker *sw = &s_sw[w];
+	sw->job = job;
+	sw->go = sceKernelCreateSema("rs12_split_go", 0, 0, 1, NULL);
+	sw->fin = sceKernelCreateSema("rs12_split_fin", 0, 0, 1, NULL);
+	if (sw->go < 0 || sw->fin < 0)
+		return 0;
+	SceUID t = sceKernelCreateThread(w ? "rs12_gpusplit2" : "rs12_gpusplit", split_worker_thread,
+		w ? SPLIT_HELPER2_PRIO : SPLIT_HELPER_PRIO, 0x20000, 0,
+		cpu == 3 ? 0x80000 : SCE_KERNEL_CPU_MASK_USER_1, NULL);
 	if (t < 0)
 		return 0;
-	sceKernelStartThread(t, 0, NULL);
+	s_sw_tid[w] = t;
+	sceKernelStartThread(t, sizeof(int), &idx[w]);
 	return 1;
 }
 
-void rs12_split_worker_kick(void)
+// measurements (ux0:data/resys12/splitprio): the priority of the first helper (CPU1, below the sound thread by default)
+void rs12_split_helper_prio(int prio)
 {
-	__atomic_store_n(&s_split_req, s_split_req + 1, __ATOMIC_RELEASE);
-	__sync_synchronize();
-	if (s_split_worker_sleeping)
-		sceKernelSignalSema(s_split_go, 1);
+	if (s_sw_tid[0] > 0)
+		sceKernelChangeThreadPriority(s_sw_tid[0], prio);
 }
 
-// returns 0 if the job ran on this thread, 1 if the helper ran it (*job_us = its time)
-int rs12_split_worker_finish(uint64_t *job_us)
+void rs12_split_worker_kick(int w)
 {
-	const uint32_t seq = s_split_req;
-	if (__sync_bool_compare_and_swap(&s_split_claim, seq - 1, seq)) {
-		s_split_job();
-		__atomic_store_n(&s_split_done, seq, __ATOMIC_RELEASE);
+	split_worker *sw = &s_sw[w];
+	__atomic_store_n(&sw->req, sw->req + 1, __ATOMIC_RELEASE);
+	__sync_synchronize();
+	if (sw->worker_sleeping)
+		sceKernelSignalSema(sw->go, 1);
+}
+
+// returns 0 if the job ran on this thread, 1 if a helper ran it (*job_us = its time)
+int rs12_split_worker_finish(int w, uint64_t *job_us)
+{
+	split_worker *sw = &s_sw[w];
+	const uint32_t seq = sw->req;
+	if (__sync_bool_compare_and_swap(&sw->claim, seq - 1, seq)) {
+		sw->job(w);
+		__atomic_store_n(&sw->done, seq, __ATOMIC_RELEASE);
 		return 0;
 	}
-	if (split_load(&s_split_done) != seq) {
+	if (split_load(&sw->done) != seq) {
 		const uint64_t t0 = sceKernelGetProcessTimeWide();
 		unsigned n = 0;
-		while (split_load(&s_split_done) != seq) {
+		while (split_load(&sw->done) != seq) {
 			if ((++n & 63) == 0 && sceKernelGetProcessTimeWide() - t0 > SPLIT_MAIN_SPIN_US)
 				break;
 		}
-		if (split_load(&s_split_done) != seq) {
-			s_split_main_sleeping = 1;
+		if (split_load(&sw->done) != seq) {
+			sw->main_sleeping = 1;
 			__sync_synchronize();
-			while (split_load(&s_split_done) != seq) {
+			while (split_load(&sw->done) != seq) {
 				SceUInt timeout = 2000;
-				sceKernelWaitSema(s_split_fin, 1, &timeout);
+				sceKernelWaitSema(sw->fin, 1, &timeout);
 			}
-			s_split_main_sleeping = 0;
+			sw->main_sleeping = 0;
 		}
 	}
-	*job_us = s_split_job_us;
+	*job_us = sw->job_us;
 	return 1;
 }
 #endif

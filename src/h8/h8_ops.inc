@@ -13,47 +13,51 @@ static void op_nop(void)
 
 static void op_mov_l_r32ih_r32l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = r32_r(h8.IR[1] >> 4);
-	h8.TMP1 = read16(h8.TMP2) << 16;
-	h8.TMP1 |= read16(h8.TMP2+2);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[1], h8.TMP1);
+	tmp2 = r32_r(h8.IR[1] >> 4);
+	tmp1 = read16(tmp2) << 16;
+	tmp1 |= read16(tmp2+2);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[1], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_l_r32l_r32ih(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = r32_r(h8.IR[1] >> 4);
-	h8.TMP1 = r32_r(h8.IR[1]);
-	set_nzv32(h8.TMP1);
-	write16(h8.TMP2, h8.TMP1 >> 16);
-	write16(h8.TMP2+2, h8.TMP1);
+	tmp2 = r32_r(h8.IR[1] >> 4);
+	tmp1 = r32_r(h8.IR[1]);
+	set_nzv32(tmp1);
+	write16(tmp2, tmp1 >> 16);
+	write16(tmp2+2, tmp1);
 	prefetch_done();
 }
 
 static void op_mov_l_abs16_r32l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = s16(h8.IR[2]);
-	h8.TMP1 = read16(h8.TMP2) << 16;
-	h8.TMP1 |= read16(h8.TMP2+2);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[1], h8.TMP1);
+	tmp2 = s16(h8.IR[2]);
+	tmp1 = read16(tmp2) << 16;
+	tmp1 |= read16(tmp2+2);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[1], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_l_abs32_r32l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[3] = read16i(h8.PC);
@@ -61,31 +65,33 @@ static void op_mov_l_abs32_r32l(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = (h8.IR[2] << 16) | h8.IR[3];
-	h8.TMP1 = read16(h8.TMP2) << 16;
-	h8.TMP1 |= read16(h8.TMP2+2);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[1], h8.TMP1);
+	tmp2 = (h8.IR[2] << 16) | h8.IR[3];
+	tmp1 = read16(tmp2) << 16;
+	tmp1 |= read16(tmp2+2);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[1], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_l_r32l_abs16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1]);
-	h8.TMP2 = s16(h8.IR[2]);
-	set_nzv32(h8.TMP1);
-	write16(h8.TMP2, h8.TMP1 >> 16);
-	write16(h8.TMP2+2, h8.TMP1);
+	tmp1 = r32_r(h8.IR[1]);
+	tmp2 = s16(h8.IR[2]);
+	set_nzv32(tmp1);
+	write16(tmp2, tmp1 >> 16);
+	write16(tmp2+2, tmp1);
 	prefetch_done();
 }
 
 static void op_mov_l_r32l_abs32(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[3] = read16i(h8.PC);
@@ -93,78 +99,83 @@ static void op_mov_l_r32l_abs32(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1]);
-	h8.TMP2 = (h8.IR[2] << 16) | h8.IR[3];
-	set_nzv32(h8.TMP1);
-	write16(h8.TMP2, h8.TMP1 >> 16);
-	write16(h8.TMP2+2, h8.TMP1);
+	tmp1 = r32_r(h8.IR[1]);
+	tmp2 = (h8.IR[2] << 16) | h8.IR[3];
+	set_nzv32(tmp1);
+	write16(tmp2, tmp1 >> 16);
+	write16(tmp2+2, tmp1);
 	prefetch_done();
 }
 
 static void op_mov_l_r32ph_r32l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(1);
-	h8.TMP2 = r32_r(h8.IR[1] >> 4);
-	h8.TMP1 = read16(h8.TMP2) << 16;
-	h8.TMP1 |= read16(h8.TMP2+2);
-	h8.TMP2 += 4;
-	r32_w(h8.IR[1] >> 4, h8.TMP2);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[1], h8.TMP1);
+	tmp2 = r32_r(h8.IR[1] >> 4);
+	tmp1 = read16(tmp2) << 16;
+	tmp1 |= read16(tmp2+2);
+	tmp2 += 4;
+	r32_w(h8.IR[1] >> 4, tmp2);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[1], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_l_r32l_pr32h(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(1);
-	h8.TMP1 = r32_r(h8.IR[1]);
-	h8.TMP2 = r32_r(h8.IR[1] >> 4);
-	h8.TMP2 -= 4;
-	r32_w(h8.IR[1] >> 4, h8.TMP2);
-	set_nzv32(h8.TMP1);
-	write16(h8.TMP2, h8.TMP1 >> 16);
-	write16(h8.TMP2+2, h8.TMP1);
+	tmp1 = r32_r(h8.IR[1]);
+	tmp2 = r32_r(h8.IR[1] >> 4);
+	tmp2 -= 4;
+	r32_w(h8.IR[1] >> 4, tmp2);
+	set_nzv32(tmp1);
+	write16(tmp2, tmp1 >> 16);
+	write16(tmp2+2, tmp1);
 	prefetch_done();
 }
 
 static void op_mov_l_r32d16h_r32l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) + s16(h8.IR[2]);
-	h8.TMP2 = read16(h8.TMP1) << 16;
-	h8.TMP2 |= read16(h8.TMP1+2);
-	set_nzv32(h8.TMP2);
-	r32_w(h8.IR[1], h8.TMP2);
+	tmp1 = r32_r(h8.IR[1] >> 4) + s16(h8.IR[2]);
+	tmp2 = read16(tmp1) << 16;
+	tmp2 |= read16(tmp1+2);
+	set_nzv32(tmp2);
+	r32_w(h8.IR[1], tmp2);
 	prefetch_done();
 }
 
 static void op_mov_l_r32l_r32d16h(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) + s16(h8.IR[2]);
-	h8.TMP2 = r32_r(h8.IR[1]);
-	set_nzv32(h8.TMP2);
-	write16(h8.TMP1, h8.TMP2 >> 16);
-	write16(h8.TMP1+2, h8.TMP2);
+	tmp1 = r32_r(h8.IR[1] >> 4) + s16(h8.IR[2]);
+	tmp2 = r32_r(h8.IR[1]);
+	set_nzv32(tmp2);
+	write16(tmp1, tmp2 >> 16);
+	write16(tmp1+2, tmp2);
 	prefetch_done();
 }
 
 static void op_mov_l_r32d32hh_r32l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[3] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[4] = read16i(h8.PC);
@@ -172,16 +183,17 @@ static void op_mov_l_r32d32hh_r32l(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) + (h8.IR[3] << 16) + h8.IR[4];
-	h8.TMP2 = read16(h8.TMP1) << 16;
-	h8.TMP2 |= read16(h8.TMP1+2);
-	set_nzv32(h8.TMP2);
-	r32_w(h8.IR[2], h8.TMP2);
+	tmp1 = r32_r(h8.IR[1] >> 4) + (h8.IR[3] << 16) + h8.IR[4];
+	tmp2 = read16(tmp1) << 16;
+	tmp2 |= read16(tmp1+2);
+	set_nzv32(tmp2);
+	r32_w(h8.IR[2], tmp2);
 	prefetch_done();
 }
 
 static void op_mov_l_r32l_r32d32hh(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[3] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[4] = read16i(h8.PC);
@@ -189,50 +201,54 @@ static void op_mov_l_r32l_r32d32hh(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) + (h8.IR[3] << 16) + h8.IR[4];
-	h8.TMP2 = r32_r(h8.IR[2]);
-	set_nzv32(h8.TMP2);
-	write16(h8.TMP1, h8.TMP2 >> 16);
-	write16(h8.TMP1+2, h8.TMP2);
+	tmp1 = r32_r(h8.IR[1] >> 4) + (h8.IR[3] << 16) + h8.IR[4];
+	tmp2 = r32_r(h8.IR[2]);
+	set_nzv32(tmp2);
+	write16(tmp1, tmp2 >> 16);
+	write16(tmp1+2, tmp2);
 	prefetch_done();
 }
 
 static void op_ldc_w_r32ih_ccr(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1] >> 4);
-	h8.CCR = read16(h8.TMP1) >> 8;
+	tmp1 = r32_r(h8.IR[1] >> 4);
+	h8.CCR = read16(tmp1) >> 8;
 	update_irq_filter();
 	prefetch_done_noirq();
 }
 
 static void op_stc_w_ccr_r32ih(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1] >> 4);
-	write16(h8.TMP1, (h8.CCR << 8) | h8.CCR);
+	tmp1 = r32_r(h8.IR[1] >> 4);
+	write16(tmp1, (h8.CCR << 8) | h8.CCR);
 	prefetch_done();
 }
 
 static void op_ldc_w_abs16_ccr(void)
 {
+	uint32_t tmp1;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = s16(h8.IR[2]);
-	h8.CCR = read16(h8.TMP1) >> 8;
+	tmp1 = s16(h8.IR[2]);
+	h8.CCR = read16(tmp1) >> 8;
 	update_irq_filter();
 	prefetch_done_noirq();
 }
 
 static void op_ldc_w_abs32_ccr(void)
 {
+	uint32_t tmp1;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[3] = read16i(h8.PC);
@@ -240,26 +256,28 @@ static void op_ldc_w_abs32_ccr(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = (h8.IR[2] << 16) | h8.IR[3];
-	h8.CCR = read16(h8.TMP1) >> 8;
+	tmp1 = (h8.IR[2] << 16) | h8.IR[3];
+	h8.CCR = read16(tmp1) >> 8;
 	update_irq_filter();
 	prefetch_done_noirq();
 }
 
 static void op_stc_w_ccr_abs16(void)
 {
+	uint32_t tmp1;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = s16(h8.IR[2]);
-	write16(h8.TMP1, (h8.CCR << 8) | h8.CCR);
+	tmp1 = s16(h8.IR[2]);
+	write16(tmp1, (h8.CCR << 8) | h8.CCR);
 	prefetch_done();
 }
 
 static void op_stc_w_ccr_abs32(void)
 {
+	uint32_t tmp1;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[3] = read16i(h8.PC);
@@ -267,63 +285,68 @@ static void op_stc_w_ccr_abs32(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = (h8.IR[2] << 16) | h8.IR[3];
-	write16(h8.TMP1, (h8.CCR << 8) | h8.CCR);
+	tmp1 = (h8.IR[2] << 16) | h8.IR[3];
+	write16(tmp1, (h8.CCR << 8) | h8.CCR);
 	prefetch_done();
 }
 
 static void op_ldc_w_r32ph_ccr(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(1);
-	h8.TMP1 = r32_r(h8.IR[1] >> 4);
-	r32_w(h8.IR[1] >> 4, h8.TMP1+2);
-	h8.CCR = read16(h8.TMP1) >> 8;
+	tmp1 = r32_r(h8.IR[1] >> 4);
+	r32_w(h8.IR[1] >> 4, tmp1+2);
+	h8.CCR = read16(tmp1) >> 8;
 	update_irq_filter();
 	prefetch_done_noirq();
 }
 
 static void op_stc_w_ccr_pr32h(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(1);
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) - 2;
-	r32_w(h8.IR[1] >> 4, h8.TMP1);
-	write16(h8.TMP1, (h8.CCR << 8) | h8.CCR);
+	tmp1 = r32_r(h8.IR[1] >> 4) - 2;
+	r32_w(h8.IR[1] >> 4, tmp1);
+	write16(tmp1, (h8.CCR << 8) | h8.CCR);
 	prefetch_done();
 }
 
 static void op_ldc_w_r32d16h_ccr(void)
 {
+	uint32_t tmp1;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) + s16(h8.IR[2]);
-	h8.CCR = read16(h8.TMP1) >> 8;
+	tmp1 = r32_r(h8.IR[1] >> 4) + s16(h8.IR[2]);
+	h8.CCR = read16(tmp1) >> 8;
 	update_irq_filter();
 	prefetch_done_noirq();
 }
 
 static void op_stc_w_ccr_r32d16h(void)
 {
+	uint32_t tmp1;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) + s16(h8.IR[2]);
-	write16(h8.TMP1, (h8.CCR << 8) | h8.CCR);
+	tmp1 = r32_r(h8.IR[1] >> 4) + s16(h8.IR[2]);
+	write16(tmp1, (h8.CCR << 8) | h8.CCR);
 	prefetch_done();
 }
 
 static void op_ldc_w_r32d32hh_ccr(void)
 {
+	uint32_t tmp1;
 	h8.IR[3] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[4] = read16i(h8.PC);
@@ -331,14 +354,15 @@ static void op_ldc_w_r32d32hh_ccr(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) + (h8.IR[3] << 16) + h8.IR[4];
-	h8.CCR = read16(h8.TMP1) >> 8;
+	tmp1 = r32_r(h8.IR[1] >> 4) + (h8.IR[3] << 16) + h8.IR[4];
+	h8.CCR = read16(tmp1) >> 8;
 	update_irq_filter();
 	prefetch_done_noirq();
 }
 
 static void op_stc_w_ccr_r32d32hh(void)
 {
+	uint32_t tmp1;
 	h8.IR[3] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[4] = read16i(h8.PC);
@@ -346,8 +370,8 @@ static void op_stc_w_ccr_r32d32hh(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) + (h8.IR[3] << 16) + h8.IR[4];
-	write16(h8.TMP1, (h8.CCR << 8) | h8.CCR);
+	tmp1 = r32_r(h8.IR[1] >> 4) + (h8.IR[3] << 16) + h8.IR[4];
+	write16(tmp1, (h8.CCR << 8) | h8.CCR);
 	prefetch_done();
 }
 
@@ -369,38 +393,41 @@ static void op_sleep(void)
 
 static void op_mulxs_b_r8h_r16l(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = s8(r16_r(h8.IR[1])) * s8(r8_r(h8.IR[1] >> 4));
-	set_nz16(h8.TMP1);
-	r16_w(h8.IR[1], h8.TMP1);
+	tmp1 = s8(r16_r(h8.IR[1])) * s8(r8_r(h8.IR[1] >> 4));
+	set_nz16(tmp1);
+	r16_w(h8.IR[1], tmp1);
 	internal(0 ? 2 : 11);
 	prefetch_done();
 }
 
 static void op_mulxs_w_r16h_r32l(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = s16(r32_r(h8.IR[1])) * s16(r16_r(h8.IR[1] >> 4));
-	set_nz32(h8.TMP1);
-	r32_w(h8.IR[1], h8.TMP1);
+	tmp1 = s16(r32_r(h8.IR[1])) * s16(r16_r(h8.IR[1] >> 4));
+	set_nz32(tmp1);
+	r32_w(h8.IR[1], tmp1);
 	internal(0 ? 3 : 19);
 	prefetch_done();
 }
 
 static void op_divxs_b_r8h_r16l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(11);
-	h8.TMP1 = s16(r16_r(h8.IR[1]));
-	h8.TMP2 = s8(r8_r(h8.IR[1] >> 4));
+	tmp1 = s16(r16_r(h8.IR[1]));
+	tmp2 = s8(r8_r(h8.IR[1] >> 4));
 	h8.CCR &= ~(F_Z|F_N);
-	if(!h8.TMP2) {
+	if(!tmp2) {
 		h8.CCR |= F_Z;
 	} else {
 		// Conditions:
@@ -412,21 +439,21 @@ static void op_divxs_b_r8h_r16l(void)
 		// p = -20, d = +3 -> q = -6, r = -2
 		// p = -20, d = -3 -> q =  7, r = -1
 		int q, r;
-		if(h8.TMP2 & 0x80000000) {
-			if(h8.TMP1 & 0x80000000) { // - -
-				q = (-h8.TMP1) / (-h8.TMP2);
-				r = -((-h8.TMP1) % (-h8.TMP2));
+		if(tmp2 & 0x80000000) {
+			if(tmp1 & 0x80000000) { // - -
+				q = (-tmp1) / (-tmp2);
+				r = -((-tmp1) % (-tmp2));
 			} else {       // + -
-				q = -(h8.TMP1 / (-h8.TMP2));
-				r = h8.TMP1 % (-h8.TMP2);
+				q = -(tmp1 / (-tmp2));
+				r = tmp1 % (-tmp2);
 			}
 		} else {
-			if(h8.TMP1 & 0x80000000) { // - +
-				q = -((-h8.TMP1) / h8.TMP2);
-				r = -((-h8.TMP1) % h8.TMP2);
+			if(tmp1 & 0x80000000) { // - +
+				q = -((-tmp1) / tmp2);
+				r = -((-tmp1) % tmp2);
 			} else {       // + +
-				q = h8.TMP1 / h8.TMP2;
-				r = h8.TMP1 % h8.TMP2;
+				q = tmp1 / tmp2;
+				r = tmp1 % tmp2;
 			}
 		}
 		if(q < 0)
@@ -438,14 +465,15 @@ static void op_divxs_b_r8h_r16l(void)
 
 static void op_divxs_w_r16h_r32l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(19);
-	h8.TMP1 = r32_r(h8.IR[1]);
-	h8.TMP2 = s16(r16_r(h8.IR[1] >> 4));
+	tmp1 = r32_r(h8.IR[1]);
+	tmp2 = s16(r16_r(h8.IR[1] >> 4));
 	h8.CCR &= ~(F_Z|F_N);
-	if(!h8.TMP2) {
+	if(!tmp2) {
 		h8.CCR |= F_Z;
 	} else {
 		// Conditions:
@@ -457,21 +485,21 @@ static void op_divxs_w_r16h_r32l(void)
 		// p = -20, d = +3 -> q = -6, r = -2
 		// p = -20, d = -3 -> q =  7, r = -1
 		int q, r;
-		if(h8.TMP2 & 0x80000000) {
-			if(h8.TMP1 & 0x80000000) { // - -
-				q = (-h8.TMP1) / (-h8.TMP2);
-				r = -((-h8.TMP1) % (-h8.TMP2));
+		if(tmp2 & 0x80000000) {
+			if(tmp1 & 0x80000000) { // - -
+				q = (-tmp1) / (-tmp2);
+				r = -((-tmp1) % (-tmp2));
 			} else {       // + -
-				q = -(h8.TMP1 / (-h8.TMP2));
-				r = h8.TMP1 % (-h8.TMP2);
+				q = -(tmp1 / (-tmp2));
+				r = tmp1 % (-tmp2);
 			}
 		} else {
-			if(h8.TMP1 & 0x80000000) { // - +
-				q = -((-h8.TMP1) / h8.TMP2);
-				r = -((-h8.TMP1) % h8.TMP2);
+			if(tmp1 & 0x80000000) { // - +
+				q = -((-tmp1) / tmp2);
+				r = -((-tmp1) % tmp2);
 			} else {       // + +
-				q = h8.TMP1 / h8.TMP2;
-				r = h8.TMP1 % h8.TMP2;
+				q = tmp1 / tmp2;
+				r = tmp1 % tmp2;
 			}
 		}
 		if(q < 0)
@@ -483,9 +511,10 @@ static void op_divxs_w_r16h_r32l(void)
 
 static void op_or_l_r32h_r32l(void)
 {
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) | r32_r(h8.IR[1]);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[1], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r32_r(h8.IR[1] >> 4) | r32_r(h8.IR[1]);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[1], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -494,9 +523,10 @@ static void op_or_l_r32h_r32l(void)
 
 static void op_xor_l_r32h_r32l(void)
 {
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) ^ r32_r(h8.IR[1]);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[1], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r32_r(h8.IR[1] >> 4) ^ r32_r(h8.IR[1]);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[1], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -505,9 +535,10 @@ static void op_xor_l_r32h_r32l(void)
 
 static void op_and_l_r32h_r32l(void)
 {
-	h8.TMP1 = r32_r(h8.IR[1] >> 4) & r32_r(h8.IR[1]);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[1], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r32_r(h8.IR[1] >> 4) & r32_r(h8.IR[1]);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[1], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -674,9 +705,10 @@ static void op_inc_l_two_r32l(void)
 
 static void op_mov_b_r8h_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0] >> 4);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0] >> 4);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -685,9 +717,10 @@ static void op_mov_b_r8h_r8l(void)
 
 static void op_mov_w_r16h_r16l(void)
 {
-	h8.TMP1 = r16_r(h8.IR[0] >> 4);
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r16_r(h8.IR[0] >> 4);
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -705,28 +738,29 @@ static void op_addx_b_r8h_r8l(void)
 
 static void op_daa_b_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	h8.TMP2 = 0;
+	uint32_t tmp1, tmp2;
+	tmp1 = r8_r(h8.IR[0]);
+	tmp2 = 0;
 	if(h8.CCR & F_C) {
 		if(1 && (h8.CCR & F_H)) {
-			if((h8.TMP1 & 0xf0) <= 0x30 && (h8.TMP1 & 0x0f) <= 3)
-				h8.TMP2 = 0x66;
+			if((tmp1 & 0xf0) <= 0x30 && (tmp1 & 0x0f) <= 3)
+				tmp2 = 0x66;
 		} else {
-			if((h8.TMP1 & 0xf0) <= 0x20)
-				h8.TMP2 = (h8.TMP1 & 0x0f) <= 9 ? 0x60 : 0x66;
+			if((tmp1 & 0xf0) <= 0x20)
+				tmp2 = (tmp1 & 0x0f) <= 9 ? 0x60 : 0x66;
 		}
 	} else {
 		if(1 && (h8.CCR & F_H)) {
-			if((h8.TMP1 & 0x0f) <= 3)
-				h8.TMP2 = (h8.TMP1 & 0xf0) <= 0x90 ? 0x06 : 0x66;
+			if((tmp1 & 0x0f) <= 3)
+				tmp2 = (tmp1 & 0xf0) <= 0x90 ? 0x06 : 0x66;
 		} else {
-			if((h8.TMP1 & 0x0f) <= 9)
-				h8.TMP2 = (h8.TMP1 & 0xf0) <= 0x90 ? 0x00 : 0x60;
+			if((tmp1 & 0x0f) <= 9)
+				tmp2 = (tmp1 & 0xf0) <= 0x90 ? 0x00 : 0x60;
 			else
-				h8.TMP2 = (h8.TMP1 & 0xf0) <= 0x80 ? 0x06 : 0x66;
+				tmp2 = (tmp1 & 0xf0) <= 0x80 ? 0x06 : 0x66;
 		}
 	}
-	r8_w(h8.IR[0], do_add8(h8.TMP1, h8.TMP2));
+	r8_w(h8.IR[0], do_add8(tmp1, tmp2));
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -735,9 +769,10 @@ static void op_daa_b_r8l(void)
 
 static void op_mov_l_r32h_r32l(void)
 {
-	h8.TMP1 = r32_r(h8.IR[0] >> 4);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r32_r(h8.IR[0] >> 4);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -962,9 +997,10 @@ static void op_rotr_l_r32l(void)
 
 static void op_or_b_r8h_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0] >> 4) | r8_r(h8.IR[0]);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0] >> 4) | r8_r(h8.IR[0]);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -973,9 +1009,10 @@ static void op_or_b_r8h_r8l(void)
 
 static void op_xor_b_r8h_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0] >> 4) ^ r8_r(h8.IR[0]);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0] >> 4) ^ r8_r(h8.IR[0]);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -984,9 +1021,10 @@ static void op_xor_b_r8h_r8l(void)
 
 static void op_and_b_r8h_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0] >> 4) & r8_r(h8.IR[0]);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0] >> 4) & r8_r(h8.IR[0]);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -995,9 +1033,10 @@ static void op_and_b_r8h_r8l(void)
 
 static void op_not_b_r8l(void)
 {
-	h8.TMP1 = ~r8_r(h8.IR[0]);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = ~r8_r(h8.IR[0]);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -1006,9 +1045,10 @@ static void op_not_b_r8l(void)
 
 static void op_not_w_r16l(void)
 {
-	h8.TMP1 = ~r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = ~r16_r(h8.IR[0]);
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -1017,9 +1057,10 @@ static void op_not_w_r16l(void)
 
 static void op_not_l_r32l(void)
 {
-	h8.TMP1 = ~r32_r(h8.IR[0]);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = ~r32_r(h8.IR[0]);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -1028,9 +1069,10 @@ static void op_not_l_r32l(void)
 
 static void op_extu_w_r16l(void)
 {
-	h8.TMP1 = u8(r16_r(h8.IR[0]));
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = u8(r16_r(h8.IR[0]));
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -1039,9 +1081,10 @@ static void op_extu_w_r16l(void)
 
 static void op_extu_l_r32l(void)
 {
-	h8.TMP1 = u16(r32_r(h8.IR[0]));
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = u16(r32_r(h8.IR[0]));
+	set_nzv32(tmp1);
+	r32_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -1077,9 +1120,10 @@ static void op_neg_l_r32l(void)
 
 static void op_exts_w_r16l(void)
 {
-	h8.TMP1 = s8(r16_r(h8.IR[0]));
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = s8(r16_r(h8.IR[0]));
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -1088,9 +1132,10 @@ static void op_exts_w_r16l(void)
 
 static void op_exts_l_r32l(void)
 {
-	h8.TMP1 = s16(r32_r(h8.IR[0]));
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = s16(r32_r(h8.IR[0]));
+	set_nzv32(tmp1);
+	r32_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -1225,23 +1270,24 @@ static void op_subx_b_r8h_r8l(void)
 
 static void op_das_b_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	h8.TMP2 = 0;
+	uint32_t tmp1, tmp2;
+	tmp1 = r8_r(h8.IR[0]);
+	tmp2 = 0;
 	if(h8.CCR & F_C) {
 		if(1 && (h8.CCR & F_H)) {
-			if((h8.TMP1 & 0xf0) >= 0x60 && (h8.TMP1 & 0x0f) >= 6)
-				h8.TMP2 = 0x9a;
+			if((tmp1 & 0xf0) >= 0x60 && (tmp1 & 0x0f) >= 6)
+				tmp2 = 0x9a;
 		} else {
-			if((h8.TMP1 & 0xf0) >= 0x70 && (h8.TMP1 & 0x0f) <= 9)
-				h8.TMP2 = 0xa0;
+			if((tmp1 & 0xf0) >= 0x70 && (tmp1 & 0x0f) <= 9)
+				tmp2 = 0xa0;
 		}
 	} else {
 		if(1 && (h8.CCR & F_H)) {
-			if((h8.TMP1 & 0xf0) <= 0x80 && (h8.TMP1 & 0x0f) >= 6)
-				h8.TMP2 = 0xfa;
+			if((tmp1 & 0xf0) <= 0x80 && (tmp1 & 0x0f) >= 6)
+				tmp2 = 0xfa;
 		}
 	}
-	r8_w(h8.IR[0], do_add8(h8.TMP1, h8.TMP2));
+	r8_w(h8.IR[0], do_add8(tmp1, tmp2));
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -1259,215 +1305,233 @@ static void op_cmp_l_r32h_r32l(void)
 
 static void op_mov_b_abs8_r8u(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = read8(0xffffff00 | h8.IR[0]);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0] >> 8, h8.TMP1);
+	tmp1 = read8(0xffffff00 | h8.IR[0]);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0] >> 8, tmp1);
 	prefetch_done();
 }
 
 static void op_mov_b_r8u_abs8(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r8_r(h8.IR[0] >> 8);
-	set_nzv8(h8.TMP1);
-	write8(0xffffff00 | h8.IR[0], h8.TMP1);
+	tmp1 = r8_r(h8.IR[0] >> 8);
+	set_nzv8(tmp1);
+	write8(0xffffff00 | h8.IR[0], tmp1);
 	prefetch_done();
 }
 
 static void op_bt_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(true)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bf_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(false)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bhi_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!(h8.CCR & (F_C|F_Z)))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bls_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(h8.CCR & (F_C|F_Z))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bcc_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!(h8.CCR & F_C))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bcs_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(h8.CCR & F_C)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bne_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!(h8.CCR & F_Z))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_beq_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(h8.CCR & F_Z)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bvc_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!(h8.CCR & F_V))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bvs_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(h8.CCR & F_V)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bpl_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!(h8.CCR & F_N))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bmi_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(h8.CCR & F_N)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bge_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!((h8.CCR & (F_N|F_V)) == F_N || (h8.CCR & (F_N|F_V)) == F_V))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_blt_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if((h8.CCR & (F_N|F_V)) == F_N || (h8.CCR & (F_N|F_V)) == F_V)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bgt_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!((h8.CCR & F_Z) || (h8.CCR & (F_N|F_V)) == F_N || (h8.CCR & (F_N|F_V)) == F_V))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_ble_rel8(void)
 {
-	h8.TMP1 = h8.PC + s8(h8.IR[0]);
+	uint32_t tmp1, tmp2;
+	tmp1 = h8.PC + s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if((h8.CCR & F_Z) || (h8.CCR & (F_N|F_V)) == F_N || (h8.CCR & (F_N|F_V)) == F_V)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
@@ -1483,20 +1547,21 @@ static void op_mulxu_b_r8h_r16l(void)
 
 static void op_divxu_b_r8h_r16l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(11);
-	h8.TMP1 = r16_r(h8.IR[0]);
-	h8.TMP2 = r8_r(h8.IR[0] >> 4);
+	tmp1 = r16_r(h8.IR[0]);
+	tmp2 = r8_r(h8.IR[0] >> 4);
 	h8.CCR &= ~(F_Z|F_N);
-	if(h8.TMP2 & 0x80)
+	if(tmp2 & 0x80)
 		h8.CCR |= F_N;
-	if(!h8.TMP2) {
+	if(!tmp2) {
 		h8.CCR |= F_Z;
 	} else {
-		int q = h8.TMP1 / h8.TMP2;
-		int r = h8.TMP1 % h8.TMP2;
+		int q = tmp1 / tmp2;
+		int r = tmp1 % tmp2;
 		r16_w(h8.IR[0], (q & 0xff) | ((r & 0xff) << 8));
 	}
 	prefetch_done();
@@ -1514,20 +1579,21 @@ static void op_mulxu_w_r16h_r32l(void)
 
 static void op_divxu_w_r16h_r32l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(11);
-	h8.TMP1 = r32_r(h8.IR[0]);
-	h8.TMP2 = r16_r(h8.IR[0] >> 4);
+	tmp1 = r32_r(h8.IR[0]);
+	tmp2 = r16_r(h8.IR[0] >> 4);
 	h8.CCR &= ~(F_Z|F_N);
-	if(h8.TMP2 & 0x80)
+	if(tmp2 & 0x80)
 		h8.CCR |= F_N;
-	if(!h8.TMP2) {
+	if(!tmp2) {
 		h8.CCR |= F_Z;
 	} else {
-		int q = h8.TMP1 / h8.TMP2;
-		int r = h8.TMP1 % h8.TMP2;
+		int q = tmp1 / tmp2;
+		int r = tmp1 % tmp2;
 		r32_w(h8.IR[0], (q & 0xffff) | ((r & 0xffff) << 16));
 	}
 	prefetch_done();
@@ -1535,19 +1601,20 @@ static void op_divxu_w_r16h_r32l(void)
 
 static void op_rts(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(7);
+	tmp1 = r32_r(7);
 	if(1) {
-		h8.TMP2 = read16(h8.TMP1) << 16;
-		h8.TMP2 |= read16(h8.TMP1+2);
-		r32_w(7, h8.TMP1+4);
+		tmp2 = read16(tmp1) << 16;
+		tmp2 |= read16(tmp1+2);
+		r32_w(7, tmp1+4);
 	} else {
-		h8.TMP2 = read16(h8.TMP1);
-		r32_w(7, h8.TMP1+2);
+		tmp2 = read16(tmp1);
+		r32_w(7, tmp1+2);
 	}
 	internal(1);
-	h8.PC = h8.TMP2;
+	h8.PC = tmp2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -1556,45 +1623,47 @@ static void op_rts(void)
 
 static void op_bsr_rel8(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.PIR = read16i(h8.PC);
-	h8.TMP2 = h8.PC;
+	tmp2 = h8.PC;
 	h8.PC += s8(h8.IR[0]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	if(1) {
-		h8.TMP1 = r32_r(7) - 4;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.TMP2 >> 16);
-		write16(h8.TMP1+2, h8.TMP2);
+		tmp1 = r32_r(7) - 4;
+		r32_w(7, tmp1);
+		write16(tmp1, tmp2 >> 16);
+		write16(tmp1+2, tmp2);
 	} else {
-		h8.TMP1 = r32_r(7) - 2;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.TMP2);
+		tmp1 = r32_r(7) - 2;
+		r32_w(7, tmp1);
+		write16(tmp1, tmp2);
 	}
 	prefetch_done();
 }
 
 static void op_rte(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(7);
+	tmp1 = r32_r(7);
 	if(exr_in_stack()) {
-		h8.EXR = (read16(h8.TMP1) >> 8) | EXR_NC;
-		h8.TMP1 += 2;
+		h8.EXR = (read16(tmp1) >> 8) | EXR_NC;
+		tmp1 += 2;
 	}
-	h8.TMP2 = read16(h8.TMP1);
-	h8.CCR = h8.TMP2 >> 8;
+	tmp2 = read16(tmp1);
+	h8.CCR = tmp2 >> 8;
 	if(1) {
-		h8.TMP2 = (h8.TMP2 & 0xff) << 16;
-		h8.TMP2 |= read16(h8.TMP1+2);
+		tmp2 = (tmp2 & 0xff) << 16;
+		tmp2 |= read16(tmp1+2);
 	} else {
-		h8.TMP2 = read16(h8.TMP1+2);
+		tmp2 = read16(tmp1+2);
 	}
-	r32_w(7, h8.TMP1+4);
+	r32_w(7, tmp1+4);
 	internal(1);
-	h8.PC = h8.TMP2;
+	h8.PC = tmp2;
 	update_irq_filter();
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -1604,17 +1673,18 @@ static void op_rte(void)
 
 static void op_trapa_imm2(void)
 {
+	uint32_t tmp1;
 	internal(1);
-	h8.TMP1 = r32_r(7) - 2;
-	r32_w(7, h8.TMP1);
-	write16(h8.TMP1, h8.NPC);
-	h8.TMP1 = r32_r(7) - 2;
-	r32_w(7, h8.TMP1);
-	write16(h8.TMP1, (h8.CCR << 8) | ((h8.NPC >> 16) & 0xff));
+	tmp1 = r32_r(7) - 2;
+	r32_w(7, tmp1);
+	write16(tmp1, h8.NPC);
+	tmp1 = r32_r(7) - 2;
+	r32_w(7, tmp1);
+	write16(tmp1, (h8.CCR << 8) | ((h8.NPC >> 16) & 0xff));
 	if(exr_in_stack()) {
-		h8.TMP1 = r32_r(7) - 2;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.EXR << 8);
+		tmp1 = r32_r(7) - 2;
+		r32_w(7, tmp1);
+		write16(tmp1, h8.EXR << 8);
 	}
 	h8.taken_irq_vector = trapa_setup() + ((h8.IR[0] >> 4) & 3);
 	debugger_exception_hook(h8.taken_irq_vector);
@@ -1635,225 +1705,241 @@ static void op_trapa_imm2(void)
 
 static void op_bt_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(true)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bf_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(false)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bhi_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!(h8.CCR & (F_C|F_Z)))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bls_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(h8.CCR & (F_C|F_Z))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bcc_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!(h8.CCR & F_C))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bcs_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(h8.CCR & F_C)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bne_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!(h8.CCR & F_Z))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_beq_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(h8.CCR & F_Z)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bvc_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!(h8.CCR & F_V))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bvs_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(h8.CCR & F_V)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bpl_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!(h8.CCR & F_N))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bmi_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(h8.CCR & F_N)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bge_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!((h8.CCR & (F_N|F_V)) == F_N || (h8.CCR & (F_N|F_V)) == F_V))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_blt_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if((h8.CCR & (F_N|F_V)) == F_N || (h8.CCR & (F_N|F_V)) == F_V)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bgt_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if(!((h8.CCR & F_Z) || (h8.CCR & (F_N|F_V)) == F_N || (h8.CCR & (F_N|F_V)) == F_V))
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_ble_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.PC + s16(h8.IR[1]);
+	tmp1 = h8.PC + s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP2 = read16i(h8.TMP1);
+	tmp2 = read16i(tmp1);
 	if((h8.CCR & F_Z) || (h8.CCR & (F_N|F_V)) == F_N || (h8.CCR & (F_N|F_V)) == F_V)
-		prefetch_switch(h8.TMP1, h8.TMP2);
+		prefetch_switch(tmp1, tmp2);
 	prefetch_done();
 }
 
@@ -1882,12 +1968,13 @@ static void op_jmp_abs24e(void)
 
 static void op_jmp_abs8i(void)
 {
+	uint32_t tmp1;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	if(1) {
-		h8.TMP1 = read16(h8.IR[0] & 0xff) << 16;
-		h8.TMP1 |= read16((h8.IR[0] & 0xff) + 2);
-		h8.PC = h8.TMP1;
+		tmp1 = read16(h8.IR[0] & 0xff) << 16;
+		tmp1 |= read16((h8.IR[0] & 0xff) + 2);
+		h8.PC = tmp1;
 	} else {
 		h8.PC = read16(h8.IR[0] & 0xff);
 	}
@@ -1900,79 +1987,83 @@ static void op_jmp_abs8i(void)
 
 static void op_bsr_rel16(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	internal(1);
-	h8.TMP2 = h8.PC;
+	tmp2 = h8.PC;
 	h8.PC += s16(h8.IR[1]);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	if(1) {
-		h8.TMP1 = r32_r(7) - 4;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.TMP2 >> 16);
-		write16(h8.TMP1+2, h8.TMP2);
+		tmp1 = r32_r(7) - 4;
+		r32_w(7, tmp1);
+		write16(tmp1, tmp2 >> 16);
+		write16(tmp1+2, tmp2);
 	} else {
-		h8.TMP1 = r32_r(7) - 2;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.TMP2);
+		tmp1 = r32_r(7) - 2;
+		r32_w(7, tmp1);
+		write16(tmp1, tmp2);
 	}
 	prefetch_done();
 }
 
 static void op_jsr_r32h(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.PIR = read16i(h8.PC);
-	h8.TMP2 = h8.PC;
+	tmp2 = h8.PC;
 	h8.PC = r32_r(h8.IR[0] >> 4);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	if(1) {
-		h8.TMP1 = r32_r(7) - 4;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.TMP2 >> 16);
-		write16(h8.TMP1+2, h8.TMP2);
+		tmp1 = r32_r(7) - 4;
+		r32_w(7, tmp1);
+		write16(tmp1, tmp2 >> 16);
+		write16(tmp1+2, tmp2);
 	} else {
-		h8.TMP1 = r32_r(7) - 2;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.TMP2);
+		tmp1 = r32_r(7) - 2;
+		r32_w(7, tmp1);
+		write16(tmp1, tmp2);
 	}
 	prefetch_done();
 }
 
 static void op_jsr_abs24e(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	internal(1);
-	h8.TMP2 = h8.PC;
+	tmp2 = h8.PC;
 	h8.PC = ((h8.IR[0] & 0xff) << 16) | h8.IR[1];
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	if(1) {
-		h8.TMP1 = r32_r(7) - 4;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.TMP2 >> 16);
-		write16(h8.TMP1+2, h8.TMP2);
+		tmp1 = r32_r(7) - 4;
+		r32_w(7, tmp1);
+		write16(tmp1, tmp2 >> 16);
+		write16(tmp1+2, tmp2);
 	} else {
-		h8.TMP1 = r32_r(7) - 2;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.TMP2);
+		tmp1 = r32_r(7) - 2;
+		r32_w(7, tmp1);
+		write16(tmp1, tmp2);
 	}
 	prefetch_done();
 }
 
 static void op_jsr_abs8i(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.PIR = read16i(h8.PC);
-	h8.TMP2 = h8.PC;
+	tmp2 = h8.PC;
 	if(1) {
-		h8.TMP1 = read16(h8.IR[0] & 0xff) << 16;
-		h8.TMP1 |= read16((h8.IR[0] & 0xff) + 2);
-		h8.PC = h8.TMP1;
+		tmp1 = read16(h8.IR[0] & 0xff) << 16;
+		tmp1 |= read16((h8.IR[0] & 0xff) + 2);
+		h8.PC = tmp1;
 	} else {
 		h8.PC = read16(h8.IR[0] & 0xff);
 	}
@@ -1980,23 +2071,24 @@ static void op_jsr_abs8i(void)
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	if(1) {
-		h8.TMP1 = r32_r(7) - 4;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.TMP2 >> 16);
-		write16(h8.TMP1+2, h8.TMP2);
+		tmp1 = r32_r(7) - 4;
+		r32_w(7, tmp1);
+		write16(tmp1, tmp2 >> 16);
+		write16(tmp1+2, tmp2);
 	} else {
-		h8.TMP1 = r32_r(7) - 2;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.TMP2);
+		tmp1 = r32_r(7) - 2;
+		r32_w(7, tmp1);
+		write16(tmp1, tmp2);
 	}
 	prefetch_done();
 }
 
 static void op_bset_r8h_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	h8.TMP1 |= 1 << ((r8_r(h8.IR[0] >> 4)) & 7);
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	tmp1 |= 1 << ((r8_r(h8.IR[0] >> 4)) & 7);
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2005,9 +2097,10 @@ static void op_bset_r8h_r8l(void)
 
 static void op_bnot_r8h_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	h8.TMP1 ^= 1 << ((r8_r(h8.IR[0] >> 4)) & 7);
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	tmp1 ^= 1 << ((r8_r(h8.IR[0] >> 4)) & 7);
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2016,9 +2109,10 @@ static void op_bnot_r8h_r8l(void)
 
 static void op_bclr_r8h_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	h8.TMP1 &= ~(1 << ((r8_r(h8.IR[0] >> 4)) & 7));
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	tmp1 &= ~(1 << ((r8_r(h8.IR[0] >> 4)) & 7));
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2027,8 +2121,9 @@ static void op_bclr_r8h_r8l(void)
 
 static void op_btst_r8h_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	if(h8.TMP1 & (1 << ((r8_r(h8.IR[0] >> 4)) & 7)))
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	if(tmp1 & (1 << ((r8_r(h8.IR[0] >> 4)) & 7)))
 		h8.CCR &= ~F_Z;
 	else
 		h8.CCR |= F_Z;
@@ -2040,9 +2135,10 @@ static void op_btst_r8h_r8l(void)
 
 static void op_or_w_r16h_r16l(void)
 {
-	h8.TMP1 = r16_r(h8.IR[0] >> 4) | r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r16_r(h8.IR[0] >> 4) | r16_r(h8.IR[0]);
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2051,9 +2147,10 @@ static void op_or_w_r16h_r16l(void)
 
 static void op_xor_w_r16h_r16l(void)
 {
-	h8.TMP1 = r16_r(h8.IR[0] >> 4) ^ r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r16_r(h8.IR[0] >> 4) ^ r16_r(h8.IR[0]);
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2062,9 +2159,10 @@ static void op_xor_w_r16h_r16l(void)
 
 static void op_and_w_r16h_r16l(void)
 {
-	h8.TMP1 = r16_r(h8.IR[0] >> 4) & r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r16_r(h8.IR[0] >> 4) & r16_r(h8.IR[0]);
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2073,12 +2171,13 @@ static void op_and_w_r16h_r16l(void)
 
 static void op_bst_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
 	if(h8.CCR & F_C)
-		h8.TMP1 |= 1 << ((h8.IR[0] >> 4) & 7);
+		tmp1 |= 1 << ((h8.IR[0] >> 4) & 7);
 	else
-		h8.TMP1 &= ~(1 << ((h8.IR[0] >> 4) & 7));
-	r8_w(h8.IR[0], h8.TMP1);
+		tmp1 &= ~(1 << ((h8.IR[0] >> 4) & 7));
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2087,12 +2186,13 @@ static void op_bst_imm3_r8l(void)
 
 static void op_bist_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
 	if(!(h8.CCR & F_C))
-		h8.TMP1 |= 1 << ((h8.IR[0] >> 4) & 7);
+		tmp1 |= 1 << ((h8.IR[0] >> 4) & 7);
 	else
-		h8.TMP1 &= ~(1 << ((h8.IR[0] >> 4) & 7));
-	r8_w(h8.IR[0], h8.TMP1);
+		tmp1 &= ~(1 << ((h8.IR[0] >> 4) & 7));
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2101,63 +2201,69 @@ static void op_bist_imm3_r8l(void)
 
 static void op_mov_b_r32ih_r8l(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = read8(r32_r(h8.IR[0] >> 4));
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0], h8.TMP1);
+	tmp1 = read8(r32_r(h8.IR[0] >> 4));
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_b_r8l_r32ih(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r8_r(h8.IR[0]);
-	set_nzv8(h8.TMP1);
-	write8(r32_r(h8.IR[0] >> 4), h8.TMP1);
+	tmp1 = r8_r(h8.IR[0]);
+	set_nzv8(tmp1);
+	write8(r32_r(h8.IR[0] >> 4), tmp1);
 	prefetch_done();
 }
 
 static void op_mov_w_r32ih_r16l(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = read16(r32_r(h8.IR[0] >> 4));
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	tmp1 = read16(r32_r(h8.IR[0] >> 4));
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_w_r16l_r32ih(void)
 {
+	uint32_t tmp1;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP1);
-	write16(r32_r(h8.IR[0] >> 4), h8.TMP1);
+	tmp1 = r16_r(h8.IR[0]);
+	set_nzv16(tmp1);
+	write16(r32_r(h8.IR[0] >> 4), tmp1);
 	prefetch_done();
 }
 
 static void op_mov_b_abs16_r8l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = read8(s16(h8.IR[1]));
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0], h8.TMP1);
+	tmp1 = read8(s16(h8.IR[1]));
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_b_abs32_r8l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[2] = read16i(h8.PC);
@@ -2165,41 +2271,44 @@ static void op_mov_b_abs32_r8l(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = read8((h8.IR[1] << 16) | h8.IR[2]);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0], h8.TMP1);
+	tmp1 = read8((h8.IR[1] << 16) | h8.IR[2]);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0], tmp1);
 	prefetch_done();
 }
 
 static void op_movfpe_abs16_r8l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	// TODO: timing
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = read8(s16(h8.IR[1]));
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0], h8.TMP1);
+	tmp1 = read8(s16(h8.IR[1]));
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_b_r8l_abs16(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r8_r(h8.IR[0]);
-	set_nzv8(h8.TMP1);
-	write8(s16(h8.IR[1]), h8.TMP1);
+	tmp1 = r8_r(h8.IR[0]);
+	set_nzv8(tmp1);
+	write8(s16(h8.IR[1]), tmp1);
 	prefetch_done();
 }
 
 static void op_mov_b_r8l_abs32(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[2] = read16i(h8.PC);
@@ -2207,41 +2316,44 @@ static void op_mov_b_r8l_abs32(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r8_r(h8.IR[0]);
-	set_nzv8(h8.TMP1);
-	write8((h8.IR[1] << 16) | h8.IR[2], h8.TMP1);
+	tmp1 = r8_r(h8.IR[0]);
+	set_nzv8(tmp1);
+	write8((h8.IR[1] << 16) | h8.IR[2], tmp1);
 	prefetch_done();
 }
 
 static void op_movtpe_r8l_abs16(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	// TODO: timing
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r8_r(h8.IR[0]);
-	set_nzv8(h8.TMP1);
-	write8(s16(h8.IR[1]), h8.TMP1);
+	tmp1 = r8_r(h8.IR[0]);
+	set_nzv8(tmp1);
+	write8(s16(h8.IR[1]), tmp1);
 	prefetch_done();
 }
 
 static void op_mov_w_abs16_r16l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = read16(s16(h8.IR[1]));
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	tmp1 = read16(s16(h8.IR[1]));
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_w_abs32_r16l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[2] = read16i(h8.PC);
@@ -2249,27 +2361,29 @@ static void op_mov_w_abs32_r16l(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = read16((h8.IR[1] << 16) | h8.IR[2]);
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	tmp1 = read16((h8.IR[1] << 16) | h8.IR[2]);
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_w_r16l_abs16(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP1);
-	write16(s16(h8.IR[1]), h8.TMP1);
+	tmp1 = r16_r(h8.IR[0]);
+	set_nzv16(tmp1);
+	write16(s16(h8.IR[1]), tmp1);
 	prefetch_done();
 }
 
 static void op_mov_w_r16l_abs32(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[2] = read16i(h8.PC);
@@ -2277,133 +2391,142 @@ static void op_mov_w_r16l_abs32(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP1);
-	write16((h8.IR[1] << 16) | h8.IR[2], h8.TMP1);
+	tmp1 = r16_r(h8.IR[0]);
+	set_nzv16(tmp1);
+	write16((h8.IR[1] << 16) | h8.IR[2], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_b_r32ph_r8l(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(1);
-	h8.TMP1 = read8(h8.TMP2);
-	h8.TMP2 += 1;
-	r32_w(h8.IR[0] >> 4, h8.TMP2);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0], h8.TMP1);
+	tmp1 = read8(tmp2);
+	tmp2 += 1;
+	r32_w(h8.IR[0] >> 4, tmp2);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_b_r8l_pr32h(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
+	uint32_t tmp1, tmp2;
+	tmp1 = r8_r(h8.IR[0]);
+	tmp2 = r32_r(h8.IR[0] >> 4);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(1);
-	h8.TMP2 -= 1;
-	r32_w(h8.IR[0] >> 4, h8.TMP2);
-	set_nzv8(h8.TMP1);
-	write8(h8.TMP2, h8.TMP1);
+	tmp2 -= 1;
+	r32_w(h8.IR[0] >> 4, tmp2);
+	set_nzv8(tmp1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_mov_w_r32ph_r16l(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(1);
-	h8.TMP1 = read16(h8.TMP2);
-	h8.TMP2 += 2;
-	r32_w(h8.IR[0] >> 4, h8.TMP2);
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	tmp1 = read16(tmp2);
+	tmp2 += 2;
+	r32_w(h8.IR[0] >> 4, tmp2);
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	prefetch_done();
 }
 
 static void op_mov_w_r16l_pr32h(void)
 {
-	h8.TMP1 = r16_r(h8.IR[0]);
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
+	uint32_t tmp1, tmp2;
+	tmp1 = r16_r(h8.IR[0]);
+	tmp2 = r32_r(h8.IR[0] >> 4);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	internal(1);
-	h8.TMP2 -= 2;
-	r32_w(h8.IR[0] >> 4, h8.TMP2);
-	set_nzv16(h8.TMP1);
-	write16(h8.TMP2, h8.TMP1);
+	tmp2 -= 2;
+	r32_w(h8.IR[0] >> 4, tmp2);
+	set_nzv16(tmp1);
+	write16(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_mov_b_r32d16h_r8l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0] >> 4) + s16(h8.IR[1]);
-	h8.TMP2 = read8(h8.TMP1);
-	set_nzv8(h8.TMP2);
-	r8_w(h8.IR[0], h8.TMP2);
+	tmp1 = r32_r(h8.IR[0] >> 4) + s16(h8.IR[1]);
+	tmp2 = read8(tmp1);
+	set_nzv8(tmp2);
+	r8_w(h8.IR[0], tmp2);
 	prefetch_done();
 }
 
 static void op_mov_b_r8l_r32d16h(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0] >> 4) + s16(h8.IR[1]);
-	h8.TMP2 = r8_r(h8.IR[0]);
-	set_nzv8(h8.TMP2);
-	write8(h8.TMP1, h8.TMP2);
+	tmp1 = r32_r(h8.IR[0] >> 4) + s16(h8.IR[1]);
+	tmp2 = r8_r(h8.IR[0]);
+	set_nzv8(tmp2);
+	write8(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_mov_w_r32d16h_r16l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0] >> 4) + s16(h8.IR[1]);
-	h8.TMP2 = read16(h8.TMP1);
-	set_nzv16(h8.TMP2);
-	r16_w(h8.IR[0], h8.TMP2);
+	tmp1 = r32_r(h8.IR[0] >> 4) + s16(h8.IR[1]);
+	tmp2 = read16(tmp1);
+	set_nzv16(tmp2);
+	r16_w(h8.IR[0], tmp2);
 	prefetch_done();
 }
 
 static void op_mov_w_r16l_r32d16h(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0] >> 4) + s16(h8.IR[1]);
-	h8.TMP2 = r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP2);
-	write16(h8.TMP1, h8.TMP2);
+	tmp1 = r32_r(h8.IR[0] >> 4) + s16(h8.IR[1]);
+	tmp2 = r16_r(h8.IR[0]);
+	set_nzv16(tmp2);
+	write16(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_bset_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	h8.TMP1 |= 1 << ((h8.IR[0] >> 4) & 7);
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	tmp1 |= 1 << ((h8.IR[0] >> 4) & 7);
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2412,9 +2535,10 @@ static void op_bset_imm3_r8l(void)
 
 static void op_bnot_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	h8.TMP1 ^= 1 << ((h8.IR[0] >> 4) & 7);
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	tmp1 ^= 1 << ((h8.IR[0] >> 4) & 7);
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2423,9 +2547,10 @@ static void op_bnot_imm3_r8l(void)
 
 static void op_bclr_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	h8.TMP1 &= ~(1 << ((h8.IR[0] >> 4) & 7));
-	r8_w(h8.IR[0], h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	tmp1 &= ~(1 << ((h8.IR[0] >> 4) & 7));
+	r8_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2434,8 +2559,9 @@ static void op_bclr_imm3_r8l(void)
 
 static void op_btst_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	if(h8.TMP1 & (1 << ((h8.IR[0] >> 4) & 7)))
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	if(tmp1 & (1 << ((h8.IR[0] >> 4) & 7)))
 		h8.CCR &= ~F_Z;
 	else
 		h8.CCR |= F_Z;
@@ -2447,8 +2573,9 @@ static void op_btst_imm3_r8l(void)
 
 static void op_bor_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	if(h8.TMP1 & (1 << ((h8.IR[0] >> 4) & 7)))
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	if(tmp1 & (1 << ((h8.IR[0] >> 4) & 7)))
 		h8.CCR |= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2458,8 +2585,9 @@ static void op_bor_imm3_r8l(void)
 
 static void op_bior_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	if(!(h8.TMP1 & (1 << ((h8.IR[0] >> 4) & 7))))
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	if(!(tmp1 & (1 << ((h8.IR[0] >> 4) & 7))))
 		h8.CCR |= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2469,8 +2597,9 @@ static void op_bior_imm3_r8l(void)
 
 static void op_bxor_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	if(h8.TMP1 & (1 << ((h8.IR[0] >> 4) & 7)))
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	if(tmp1 & (1 << ((h8.IR[0] >> 4) & 7)))
 		h8.CCR ^= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2480,8 +2609,9 @@ static void op_bxor_imm3_r8l(void)
 
 static void op_bixor_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	if(!(h8.TMP1 & (1 << ((h8.IR[0] >> 4) & 7))))
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	if(!(tmp1 & (1 << ((h8.IR[0] >> 4) & 7))))
 		h8.CCR ^= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2491,8 +2621,9 @@ static void op_bixor_imm3_r8l(void)
 
 static void op_band_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	if(!(h8.TMP1 & (1 << ((h8.IR[0] >> 4) & 7))))
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	if(!(tmp1 & (1 << ((h8.IR[0] >> 4) & 7))))
 		h8.CCR &= ~F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2502,8 +2633,9 @@ static void op_band_imm3_r8l(void)
 
 static void op_biand_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	if(h8.TMP1 & (1 << ((h8.IR[0] >> 4) & 7)))
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	if(tmp1 & (1 << ((h8.IR[0] >> 4) & 7)))
 		h8.CCR &= ~F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2513,8 +2645,9 @@ static void op_biand_imm3_r8l(void)
 
 static void op_bld_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	if(h8.TMP1 & (1 << ((h8.IR[0] >> 4) & 7)))
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	if(tmp1 & (1 << ((h8.IR[0] >> 4) & 7)))
 		h8.CCR |= F_C;
 	else
 		h8.CCR &= ~F_C;
@@ -2526,8 +2659,9 @@ static void op_bld_imm3_r8l(void)
 
 static void op_bild_imm3_r8l(void)
 {
-	h8.TMP1 = r8_r(h8.IR[0]);
-	if(!(h8.TMP1 & (1 << ((h8.IR[0] >> 4) & 7))))
+	uint32_t tmp1;
+	tmp1 = r8_r(h8.IR[0]);
+	if(!(tmp1 & (1 << ((h8.IR[0] >> 4) & 7))))
 		h8.CCR |= F_C;
 	else
 		h8.CCR &= ~F_C;
@@ -2539,6 +2673,7 @@ static void op_bild_imm3_r8l(void)
 
 static void op_mov_b_r32d32hh_r8l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[3] = read16i(h8.PC);
@@ -2546,15 +2681,16 @@ static void op_mov_b_r32d32hh_r8l(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0] >> 4) + (h8.IR[2] << 16) + h8.IR[3];
-	h8.TMP2 = read8(h8.TMP1);
-	set_nzv8(h8.TMP2);
-	r8_w(h8.IR[1], h8.TMP2);
+	tmp1 = r32_r(h8.IR[0] >> 4) + (h8.IR[2] << 16) + h8.IR[3];
+	tmp2 = read8(tmp1);
+	set_nzv8(tmp2);
+	r8_w(h8.IR[1], tmp2);
 	prefetch_done();
 }
 
 static void op_mov_b_r8l_r32d32hh(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[3] = read16i(h8.PC);
@@ -2562,15 +2698,16 @@ static void op_mov_b_r8l_r32d32hh(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0] >> 4) + (h8.IR[2] << 16) + h8.IR[3];
-	h8.TMP2 = r8_r(h8.IR[1]);
-	set_nzv8(h8.TMP2);
-	write8(h8.TMP1, h8.TMP2);
+	tmp1 = r32_r(h8.IR[0] >> 4) + (h8.IR[2] << 16) + h8.IR[3];
+	tmp2 = r8_r(h8.IR[1]);
+	set_nzv8(tmp2);
+	write8(tmp1, tmp2);
 	prefetch_done();
 }
 
 static void op_mov_w_r32d32hh_r16l(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[3] = read16i(h8.PC);
@@ -2578,15 +2715,16 @@ static void op_mov_w_r32d32hh_r16l(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0] >> 4) + (h8.IR[2] << 16) + h8.IR[3];
-	h8.TMP2 = read16(h8.TMP1);
-	set_nzv16(h8.TMP2);
-	r16_w(h8.IR[1], h8.TMP2);
+	tmp1 = r32_r(h8.IR[0] >> 4) + (h8.IR[2] << 16) + h8.IR[3];
+	tmp2 = read16(tmp1);
+	set_nzv16(tmp2);
+	r16_w(h8.IR[1], tmp2);
 	prefetch_done();
 }
 
 static void op_mov_w_r16l_r32d32hh(void)
 {
+	uint32_t tmp1, tmp2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[3] = read16i(h8.PC);
@@ -2594,10 +2732,10 @@ static void op_mov_w_r16l_r32d32hh(void)
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0] >> 4) + (h8.IR[2] << 16) + h8.IR[3];
-	h8.TMP2 = r16_r(h8.IR[1]);
-	set_nzv16(h8.TMP2);
-	write16(h8.TMP1, h8.TMP2);
+	tmp1 = r32_r(h8.IR[0] >> 4) + (h8.IR[2] << 16) + h8.IR[3];
+	tmp2 = r16_r(h8.IR[1]);
+	set_nzv16(tmp2);
+	write16(tmp1, tmp2);
 	prefetch_done();
 }
 
@@ -2648,11 +2786,12 @@ static void op_sub_w_imm16_r16l(void)
 
 static void op_or_w_imm16_r16l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.IR[1] | r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	tmp1 = h8.IR[1] | r16_r(h8.IR[0]);
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2661,11 +2800,12 @@ static void op_or_w_imm16_r16l(void)
 
 static void op_xor_w_imm16_r16l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.IR[1] ^ r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	tmp1 = h8.IR[1] ^ r16_r(h8.IR[0]);
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2674,11 +2814,12 @@ static void op_xor_w_imm16_r16l(void)
 
 static void op_and_w_imm16_r16l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = h8.IR[1] & r16_r(h8.IR[0]);
-	set_nzv16(h8.TMP1);
-	r16_w(h8.IR[0], h8.TMP1);
+	tmp1 = h8.IR[1] & r16_r(h8.IR[0]);
+	set_nzv16(tmp1);
+	r16_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2687,13 +2828,14 @@ static void op_and_w_imm16_r16l(void)
 
 static void op_mov_l_imm32_r32l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = (h8.IR[1] << 16) | h8.IR[2];
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[0], h8.TMP1);
+	tmp1 = (h8.IR[1] << 16) | h8.IR[2];
+	set_nzv32(tmp1);
+	r32_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2741,13 +2883,14 @@ static void op_sub_l_imm32_r32l(void)
 
 static void op_or_l_imm32_r32l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0]) | ((h8.IR[1] << 16) | h8.IR[2]);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[0], h8.TMP1);
+	tmp1 = r32_r(h8.IR[0]) | ((h8.IR[1] << 16) | h8.IR[2]);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2756,13 +2899,14 @@ static void op_or_l_imm32_r32l(void)
 
 static void op_xor_l_imm32_r32l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0]) ^ ((h8.IR[1] << 16) | h8.IR[2]);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[0], h8.TMP1);
+	tmp1 = r32_r(h8.IR[0]) ^ ((h8.IR[1] << 16) | h8.IR[2]);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2771,13 +2915,14 @@ static void op_xor_l_imm32_r32l(void)
 
 static void op_and_l_imm32_r32l(void)
 {
+	uint32_t tmp1;
 	h8.IR[1] = read16i(h8.PC);
 	h8.PC += 2;
 	h8.IR[2] = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 = r32_r(h8.IR[0]) & ((h8.IR[1] << 16) | h8.IR[2]);
-	set_nzv32(h8.TMP1);
-	r32_w(h8.IR[0], h8.TMP1);
+	tmp1 = r32_r(h8.IR[0]) & ((h8.IR[1] << 16) | h8.IR[2]);
+	set_nzv32(tmp1);
+	r32_w(h8.IR[0], tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -2786,9 +2931,10 @@ static void op_and_l_imm32_r32l(void)
 
 static void op_eepmov_b(void)
 {
+	uint32_t tmp1;
 	while(r8_r(4+8)) {
-		h8.TMP1 = read8(r32_r(5));
-		write8(r32_r(6), h8.TMP1);
+		tmp1 = read8(r32_r(5));
+		write8(r32_r(6), tmp1);
 		r32_w(5, r32_r(5)+1);
 		r32_w(6, r32_r(6)+1);
 		r8_w(4+8, r8_r(4+8)-1);
@@ -2801,9 +2947,10 @@ static void op_eepmov_b(void)
 
 static void op_eepmov_w(void)
 {
+	uint32_t tmp1;
 	while(r16_r(4)) {
-		h8.TMP1 = read8(r32_r(5));
-		write8(r32_r(6), h8.TMP1);
+		tmp1 = read8(r32_r(5));
+		write8(r32_r(6), tmp1);
 		r32_w(5, r32_r(5)+1);
 		r32_w(6, r32_r(6)+1);
 		r16_w(4, r16_r(4)-1);
@@ -2816,9 +2963,10 @@ static void op_eepmov_w(void)
 
 static void op_btst_r8h_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((r8_r(h8.IR[1] >> 4)) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((r8_r(h8.IR[1] >> 4)) & 7)))
 		h8.CCR &= ~F_Z;
 	else
 		h8.CCR |= F_Z;
@@ -2830,9 +2978,10 @@ static void op_btst_r8h_r32ihh(void)
 
 static void op_btst_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((h8.IR[1] >> 4) & 7)))
 		h8.CCR &= ~F_Z;
 	else
 		h8.CCR |= F_Z;
@@ -2844,9 +2993,10 @@ static void op_btst_imm3_r32ihh(void)
 
 static void op_bor_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((h8.IR[1] >> 4) & 7)))
 		h8.CCR |= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2856,9 +3006,10 @@ static void op_bor_imm3_r32ihh(void)
 
 static void op_bior_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	if(!(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7))))
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	if(!(tmp1 & (1 << ((h8.IR[1] >> 4) & 7))))
 		h8.CCR |= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2868,9 +3019,10 @@ static void op_bior_imm3_r32ihh(void)
 
 static void op_bxor_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((h8.IR[1] >> 4) & 7)))
 		h8.CCR ^= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2880,9 +3032,10 @@ static void op_bxor_imm3_r32ihh(void)
 
 static void op_bixor_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	if(!(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7))))
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	if(!(tmp1 & (1 << ((h8.IR[1] >> 4) & 7))))
 		h8.CCR ^= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2892,9 +3045,10 @@ static void op_bixor_imm3_r32ihh(void)
 
 static void op_band_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	if(!(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7))))
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	if(!(tmp1 & (1 << ((h8.IR[1] >> 4) & 7))))
 		h8.CCR &= ~F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2904,9 +3058,10 @@ static void op_band_imm3_r32ihh(void)
 
 static void op_biand_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((h8.IR[1] >> 4) & 7)))
 		h8.CCR &= ~F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -2916,9 +3071,10 @@ static void op_biand_imm3_r32ihh(void)
 
 static void op_bld_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((h8.IR[1] >> 4) & 7)))
 		h8.CCR |= F_C;
 	else
 		h8.CCR &= ~F_C;
@@ -2930,9 +3086,10 @@ static void op_bld_imm3_r32ihh(void)
 
 static void op_bild_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	if(!(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7))))
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	if(!(tmp1 & (1 << ((h8.IR[1] >> 4) & 7))))
 		h8.CCR |= F_C;
 	else
 		h8.CCR &= ~F_C;
@@ -2944,111 +3101,120 @@ static void op_bild_imm3_r32ihh(void)
 
 static void op_bset_r8h_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	h8.TMP1 |= 1 << ((r8_r(h8.IR[1] >> 4)) & 7);
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	tmp1 |= 1 << ((r8_r(h8.IR[1] >> 4)) & 7);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bnot_r8h_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	h8.TMP1 ^= 1 << ((r8_r(h8.IR[1] >> 4)) & 7);
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	tmp1 ^= 1 << ((r8_r(h8.IR[1] >> 4)) & 7);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bclr_r8h_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	h8.TMP1 &= ~(1 << ((r8_r(h8.IR[1] >> 4)) & 7));
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	tmp1 &= ~(1 << ((r8_r(h8.IR[1] >> 4)) & 7));
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bst_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
 	if(h8.CCR & F_C)
-		h8.TMP1 |= 1 << ((h8.IR[1] >> 4) & 7);
+		tmp1 |= 1 << ((h8.IR[1] >> 4) & 7);
 	else
-		h8.TMP1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
+		tmp1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bist_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
 	if(!(h8.CCR & F_C))
-		h8.TMP1 |= 1 << ((h8.IR[1] >> 4) & 7);
+		tmp1 |= 1 << ((h8.IR[1] >> 4) & 7);
 	else
-		h8.TMP1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
+		tmp1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bset_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	h8.TMP1 |= 1 << ((h8.IR[1] >> 4) & 7);
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	tmp1 |= 1 << ((h8.IR[1] >> 4) & 7);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bnot_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	h8.TMP1 ^= 1 << ((h8.IR[1] >> 4) & 7);
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	tmp1 ^= 1 << ((h8.IR[1] >> 4) & 7);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bclr_imm3_r32ihh(void)
 {
-	h8.TMP2 = r32_r(h8.IR[0] >> 4);
-	h8.TMP1 = read8(h8.TMP2);
-	h8.TMP1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
+	uint32_t tmp1, tmp2;
+	tmp2 = r32_r(h8.IR[0] >> 4);
+	tmp1 = read8(tmp2);
+	tmp1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_btst_r8h_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((r8_r(h8.IR[1] >> 4)) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((r8_r(h8.IR[1] >> 4)) & 7)))
 		h8.CCR &= ~F_Z;
 	else
 		h8.CCR |= F_Z;
@@ -3060,9 +3226,10 @@ static void op_btst_r8h_abs8(void)
 
 static void op_btst_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((h8.IR[1] >> 4) & 7)))
 		h8.CCR &= ~F_Z;
 	else
 		h8.CCR |= F_Z;
@@ -3074,9 +3241,10 @@ static void op_btst_imm3_abs8(void)
 
 static void op_bor_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((h8.IR[1] >> 4) & 7)))
 		h8.CCR |= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -3086,9 +3254,10 @@ static void op_bor_imm3_abs8(void)
 
 static void op_bior_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	if(!(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7))))
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	if(!(tmp1 & (1 << ((h8.IR[1] >> 4) & 7))))
 		h8.CCR |= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -3098,9 +3267,10 @@ static void op_bior_imm3_abs8(void)
 
 static void op_bxor_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((h8.IR[1] >> 4) & 7)))
 		h8.CCR ^= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -3110,9 +3280,10 @@ static void op_bxor_imm3_abs8(void)
 
 static void op_bixor_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	if(!(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7))))
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	if(!(tmp1 & (1 << ((h8.IR[1] >> 4) & 7))))
 		h8.CCR ^= F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -3122,9 +3293,10 @@ static void op_bixor_imm3_abs8(void)
 
 static void op_band_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	if(!(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7))))
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	if(!(tmp1 & (1 << ((h8.IR[1] >> 4) & 7))))
 		h8.CCR &= ~F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -3134,9 +3306,10 @@ static void op_band_imm3_abs8(void)
 
 static void op_biand_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((h8.IR[1] >> 4) & 7)))
 		h8.CCR &= ~F_C;
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
@@ -3146,9 +3319,10 @@ static void op_biand_imm3_abs8(void)
 
 static void op_bld_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	if(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7)))
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	if(tmp1 & (1 << ((h8.IR[1] >> 4) & 7)))
 		h8.CCR |= F_C;
 	else
 		h8.CCR &= ~F_C;
@@ -3160,9 +3334,10 @@ static void op_bld_imm3_abs8(void)
 
 static void op_bild_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	if(!(h8.TMP1 & (1 << ((h8.IR[1] >> 4) & 7))))
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	if(!(tmp1 & (1 << ((h8.IR[1] >> 4) & 7))))
 		h8.CCR |= F_C;
 	else
 		h8.CCR &= ~F_C;
@@ -3174,103 +3349,111 @@ static void op_bild_imm3_abs8(void)
 
 static void op_bset_r8h_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	h8.TMP1 |= 1 << ((r8_r(h8.IR[1] >> 4)) & 7);
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	tmp1 |= 1 << ((r8_r(h8.IR[1] >> 4)) & 7);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bnot_r8h_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	h8.TMP1 ^= 1 << ((r8_r(h8.IR[1] >> 4)) & 7);
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	tmp1 ^= 1 << ((r8_r(h8.IR[1] >> 4)) & 7);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bclr_r8h_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
-	h8.TMP1 &= ~(1 << ((r8_r(h8.IR[1] >> 4)) & 7));
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
+	tmp1 &= ~(1 << ((r8_r(h8.IR[1] >> 4)) & 7));
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	write8(h8.TMP2, h8.TMP1);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bst_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	if(h8.CCR & F_C)
-		h8.TMP1 |= 1 << ((h8.IR[1] >> 4) & 7);
+		tmp1 |= 1 << ((h8.IR[1] >> 4) & 7);
 	else
-		h8.TMP1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
-	write8(h8.TMP2, h8.TMP1);
+		tmp1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bist_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
 	if(!(h8.CCR & F_C))
-		h8.TMP1 |= 1 << ((h8.IR[1] >> 4) & 7);
+		tmp1 |= 1 << ((h8.IR[1] >> 4) & 7);
 	else
-		h8.TMP1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
-	write8(h8.TMP2, h8.TMP1);
+		tmp1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bset_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 |= 1 << ((h8.IR[1] >> 4) & 7);
-	write8(h8.TMP2, h8.TMP1);
+	tmp1 |= 1 << ((h8.IR[1] >> 4) & 7);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bnot_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 ^= 1 << ((h8.IR[1] >> 4) & 7);
-	write8(h8.TMP2, h8.TMP1);
+	tmp1 ^= 1 << ((h8.IR[1] >> 4) & 7);
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
 static void op_bclr_imm3_abs8(void)
 {
-	h8.TMP2 = 0xffffff00 | h8.IR[0];
-	h8.TMP1 = read8(h8.TMP2);
+	uint32_t tmp1, tmp2;
+	tmp2 = 0xffffff00 | h8.IR[0];
+	tmp1 = read8(tmp2);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
-	h8.TMP1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
-	write8(h8.TMP2, h8.TMP1);
+	tmp1 &= ~(1 << ((h8.IR[1] >> 4) & 7));
+	write8(tmp2, tmp1);
 	prefetch_done();
 }
 
@@ -3312,9 +3495,10 @@ static void op_subx_b_imm8_r8u(void)
 
 static void op_or_b_imm8_r8u(void)
 {
-	h8.TMP1 = h8.IR[0] | r8_r(h8.IR[0] >> 8);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0] >> 8, h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = h8.IR[0] | r8_r(h8.IR[0] >> 8);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0] >> 8, tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -3323,9 +3507,10 @@ static void op_or_b_imm8_r8u(void)
 
 static void op_xor_b_imm8_r8u(void)
 {
-	h8.TMP1 = h8.IR[0] ^ r8_r(h8.IR[0] >> 8);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0] >> 8, h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = h8.IR[0] ^ r8_r(h8.IR[0] >> 8);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0] >> 8, tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -3334,9 +3519,10 @@ static void op_xor_b_imm8_r8u(void)
 
 static void op_and_b_imm8_r8u(void)
 {
-	h8.TMP1 = h8.IR[0] & r8_r(h8.IR[0] >> 8);
-	set_nzv8(h8.TMP1);
-	r8_w(h8.IR[0] >> 8, h8.TMP1);
+	uint32_t tmp1;
+	tmp1 = h8.IR[0] & r8_r(h8.IR[0] >> 8);
+	set_nzv8(tmp1);
+	r8_w(h8.IR[0] >> 8, tmp1);
 	h8.NPC = h8.PC & 0xffffff;
 	h8.PIR = read16i(h8.PC);
 	h8.PC += 2;
@@ -3373,17 +3559,18 @@ static void state_reset(void)
 
 static void state_irq(void)
 {
+	uint32_t tmp1;
 	internal(1);
-	h8.TMP1 = r32_r(7) - 2;
-	r32_w(7, h8.TMP1);
-	write16(h8.TMP1, h8.NPC);
-	h8.TMP1 = r32_r(7) - 2;
-	r32_w(7, h8.TMP1);
-	write16(h8.TMP1, (h8.CCR << 8) | ((h8.NPC >> 16) & 0xff));
+	tmp1 = r32_r(7) - 2;
+	r32_w(7, tmp1);
+	write16(tmp1, h8.NPC);
+	tmp1 = r32_r(7) - 2;
+	r32_w(7, tmp1);
+	write16(tmp1, (h8.CCR << 8) | ((h8.NPC >> 16) & 0xff));
 	if(exr_in_stack()) {
-		h8.TMP1 = r32_r(7) - 2;
-		r32_w(7, h8.TMP1);
-		write16(h8.TMP1, h8.EXR << 8);
+		tmp1 = r32_r(7) - 2;
+		r32_w(7, tmp1);
+		write16(tmp1, h8.EXR << 8);
 	}
 	debugger_exception_hook(h8.taken_irq_vector);
 	if(1) {

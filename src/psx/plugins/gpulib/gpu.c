@@ -34,6 +34,10 @@ int rs12_gp0dump_frame = -1;
 static noinline int do_cmd_buffer(struct psx_gpu *gpu, uint32_t *data, int count,
     int *cycles_sum, int *cycles_last);
 static noinline void finish_vram_transfer(struct psx_gpu *gpu, int is_read, int is_async);
+// ReSys12: GPU input recording (rs12_gpu_rec_*, at the end of this file)
+static int gr_on;
+static void gr_put(uint32_t type, const uint32_t *data, uint32_t n);
+enum { GR_STATUS = 1, GR_MEM, GR_WORD, GR_CHAIN, GR_CHAIN_END, GR_READMEM, GR_READ, GR_VBLANK };
 
 static void sync_renderer(struct psx_gpu *gpu)
 {
@@ -383,6 +387,8 @@ long GPUshutdown(void)
 
 void GPUwriteStatus(uint32_t data)
 {
+  if (unlikely(gr_on))
+    gr_put(GR_STATUS, &data, 1);
   uint32_t cmd = data >> 24;
   uint32_t fb_dirty = 1, frame;
   int src_x, src_y, changed;
@@ -1020,6 +1026,8 @@ static noinline void flush_cmd_buffer(struct psx_gpu *gpu)
 void GPUwriteDataMem(uint32_t *mem, int count)
 {
   int dummy = 0, left;
+  if (unlikely(gr_on))
+    gr_put(GR_MEM, mem, (uint32_t)count);
 
   log_io(&gpu, "gpu_dma_write %p %d cached %d\n", mem, count, gpu.cmd_len);
 
@@ -1035,6 +1043,8 @@ void GPUwriteDataMem(uint32_t *mem, int count)
 
 void GPUwriteData(uint32_t data)
 {
+  if (unlikely(gr_on))
+    gr_put(GR_WORD, &data, 1);
   log_io(&gpu, "gpu_write %08x\n", data);
   gpu.cmd_buffer[gpu.cmd_len++] = HTOLE32(data);
   if (gpu.cmd_len >= CMD_BUFFER_LEN) {
@@ -1068,6 +1078,8 @@ long GPUdmaChain(uint32_t *rambase, uint32_t start_addr,
     cpu_cycles_sum += 10;
     if (len > 0)
       cpu_cycles_sum += 5 + len;
+    if (unlikely(gr_on) && len > 0)
+      gr_put(GR_CHAIN, list + 1, (uint32_t)len);
 
     log_io(&gpu, ".chain %08lx #%d+%d %u+%u\n",
       (long)(list - rambase) * 4, len, gpu.cmd_len, cpu_cycles_sum, cpu_cycles_last);
@@ -1109,6 +1121,8 @@ long GPUdmaChain(uint32_t *rambase, uint32_t start_addr,
   }
 
   sync_ecmds_status_bits(&gpu);
+  if (unlikely(gr_on))
+    gr_put(GR_CHAIN_END, NULL, 0);
 
   //printf(" -> %d %d\n", cpu_cycles_sum, cpu_cycles_last);
   gpu.state.last_list.frame = *gpu.state.frame_count;
@@ -1124,6 +1138,10 @@ long GPUdmaChain(uint32_t *rambase, uint32_t start_addr,
 
 void GPUreadDataMem(uint32_t *mem, int count)
 {
+  if (unlikely(gr_on)) {
+    const uint32_t c = (uint32_t)count;
+    gr_put(GR_READMEM, &c, 1);
+  }
   log_io(&gpu, "gpu_dma_read  %p %d\n", mem, count);
 
   if (unlikely(gpu.cmd_len > 0)) {
@@ -1138,6 +1156,8 @@ void GPUreadDataMem(uint32_t *mem, int count)
 uint32_t GPUreadData(void)
 {
   uint32_t ret;
+  if (unlikely(gr_on))
+    gr_put(GR_READ, NULL, 0);
 
   if (unlikely(gpu.cmd_len > 0)) {
     flush_cmd_buffer(&gpu);
@@ -1285,6 +1305,10 @@ void rs12_gpu_set_allow_interlace(int mode)
 void GPUvBlank(int is_vblank, int lcf)
 {
   int interlace;
+  if (unlikely(gr_on)) {
+    const uint32_t v[3] = { (uint32_t)is_vblank, (uint32_t)lcf, *gpu.state.frame_count };
+    gr_put(GR_VBLANK, v, 3);
+  }
   interlace = gpu.state.allow_interlace
     && (gpu.status & PSX_GPU_STATUS_INTERLACE)
     && (gpu.status & PSX_GPU_STATUS_DHEIGHT);
@@ -1377,6 +1401,156 @@ void GPUrearmedCallbacks(const struct rearmed_cbs *cbs)
   vout_set_config(cbs);
 
   gpu_async_enable(&gpu, cbs->thread_rendering);
+}
+
+// ---- ReSys12: GPU input recording and replay (measurements). A fixed piece of rendering: the GPU state and VRAM
+// at the start, then every call into the GPU in order (GP1 / GP0 writes, DMA chain packets, VRAM reads, vblanks).
+// Replayed on the device it is timed with the renderer settings of the run; its VRAM hash at the end compares
+// settings (split rendering on / off) in the PC harness. Format (32-bit words): magic, version, frames, the GPUFreeze
+// (2 + 256 words), VRAM (1024 x 1024 x 2 bytes), then events: type, n, n words.
+#define GR_MAGIC 0x52475352u // "RSGR"
+#define GR_HEAD (3 + 2 + 256)
+#define GR_VRAM_WORDS (1024 * 1024 / 2)
+static uint32_t *gr_buf;
+static size_t gr_n, gr_cap;
+static uint32_t gr_frames_left;
+static int gr_done;
+
+static void gr_put(uint32_t type, const uint32_t *data, uint32_t n)
+{
+  if (gr_n + 2 + (type == GR_READ || type == GR_CHAIN_END ? 0 : n) > gr_cap) {
+    gr_on = 0; // full: the recording ends here
+    gr_done = 1;
+    return;
+  }
+  gr_buf[gr_n++] = type;
+  gr_buf[gr_n++] = n;
+  if (data && n) {
+    memcpy(gr_buf + gr_n, data, n * 4);
+    gr_n += n;
+  }
+  if (type == GR_VBLANK && data[0] && gr_frames_left && --gr_frames_left == 0) {
+    gr_on = 0;
+    gr_done = 1;
+  }
+}
+
+// start recording (emulation thread, between frames): at most max_words of events, for frames frames
+int rs12_gpu_rec_start(size_t max_words, uint32_t frames)
+{
+  free(gr_buf);
+  gr_cap = GR_HEAD + GR_VRAM_WORDS + max_words;
+  gr_buf = malloc(gr_cap * 4);
+  gr_n = 0;
+  gr_done = 0;
+  if (!gr_buf)
+    return 0;
+  GPUFreeze_t f;
+  uint16_t *vram;
+  memset(&f, 0, sizeof(f));
+  GPUfreeze(1, &f, &vram); // (flushes and syncs the renderer)
+  gr_buf[0] = GR_MAGIC;
+  gr_buf[1] = 1;
+  gr_buf[2] = frames;
+  gr_buf[3] = f.ulFreezeVersion;
+  gr_buf[4] = f.ulStatus;
+  memcpy(gr_buf + 5, f.ulControl, 256 * 4);
+  memcpy(gr_buf + GR_HEAD, gpu.vram, GR_VRAM_WORDS * 4);
+  gr_n = GR_HEAD + GR_VRAM_WORDS;
+  gr_frames_left = frames;
+  gr_on = 1;
+  return 1;
+}
+
+// the recording, once it has ended (NULL before); *words = its size
+const uint32_t *rs12_gpu_rec_result(size_t *words)
+{
+  if (!gr_done)
+    return NULL;
+  *words = gr_n;
+  return gr_buf;
+}
+
+uint64_t rs12_gpu_vram_hash(void)
+{
+  sync_renderer(&gpu);
+  uint64_t h = 1469598103934665603ull;
+  const uint32_t *v = (const uint32_t *)gpu.vram;
+  for (size_t i = 0; i < GR_VRAM_WORDS; i++)
+    h = (h ^ v[i]) * 1099511628211ull;
+  return h;
+}
+
+// replay a recording (emulation thread; the emulation does not run meanwhile): its start state, then its events.
+// vblanks only set the frame counter unless with_vblank (no flips: only the rendering is timed). Returns the
+// frames replayed, -1 if it is not a recording
+int rs12_gpu_replay(const uint32_t *b, size_t words, int with_vblank)
+{
+  static uint32_t scratch[0x40000];
+  if (words < GR_HEAD + GR_VRAM_WORDS || b[0] != GR_MAGIC || b[1] != 1)
+    return -1;
+  GPUFreeze_t f;
+  uint16_t *vram;
+  memset(&f, 0, sizeof(f));
+  f.ulFreezeVersion = b[3];
+  f.ulStatus = b[4];
+  memcpy(f.ulControl, b + 5, 256 * 4);
+  sync_renderer(&gpu);
+  memcpy(gpu.vram, b + GR_HEAD, GR_VRAM_WORDS * 4);
+  GPUfreeze(0, &f, &vram);
+  int frames = 0, dummy = 0;
+  const uint32_t fc0 = *gpu.state.frame_count;
+  size_t i = GR_HEAD + GR_VRAM_WORDS;
+  while (i + 2 <= words) {
+    const uint32_t type = b[i], n = b[i + 1];
+    const uint32_t *d = b + i + 2;
+    i += 2 + (type == GR_READ || type == GR_CHAIN_END ? 0 : n);
+    if (i > words || n > sizeof(scratch) / 4)
+      break;
+    switch (type) {
+    case GR_STATUS: GPUwriteStatus(d[0]); break;
+    case GR_WORD: GPUwriteData(d[0]); break;
+    case GR_MEM:
+      memcpy(scratch, d, n * 4);
+      GPUwriteDataMem(scratch, (int)n);
+      break;
+    case GR_CHAIN: // as one packet of GPUdmaChain
+      if (gpu.cmd_len > 0) {
+        if (gpu.cmd_len + n > ARRAY_SIZE(gpu.cmd_buffer))
+          gpu.cmd_len = 0;
+        memcpy(gpu.cmd_buffer + gpu.cmd_len, d, n * 4);
+        gpu.cmd_len += n;
+        flush_cmd_buffer(&gpu);
+      } else {
+        memcpy(scratch, d, n * 4);
+        const int left = do_cmd_buffer(&gpu, scratch, (int)n, &dummy, &dummy);
+        if (left) {
+          memcpy(gpu.cmd_buffer, scratch + n - left, left * 4);
+          gpu.cmd_len = left;
+        }
+      }
+      break;
+    case GR_CHAIN_END: sync_ecmds_status_bits(&gpu); break;
+    case GR_READMEM:
+      if (d[0] <= sizeof(scratch) / 4)
+        GPUreadDataMem(scratch, (int)d[0]);
+      break;
+    case GR_READ: GPUreadData(); break;
+    case GR_VBLANK:
+      *gpu.state.frame_count = d[2];
+      if (with_vblank)
+        GPUvBlank((int)d[0], (int)d[1]);
+      frames += d[0] != 0;
+      break;
+    }
+  }
+  if (gpu.cmd_len > 0) {
+    flush_cmd_buffer(&gpu);
+    sync_ecmds_status_bits(&gpu);
+  }
+  sync_renderer(&gpu);
+  *gpu.state.frame_count = fc0;
+  return frames;
 }
 
 // for standalone plugins only

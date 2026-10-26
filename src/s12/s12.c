@@ -11,14 +11,44 @@
 #include "psxmem.h"
 #include "r3000a.h"
 #include "s12_bus.h"
+#include "s12_hle.h"
 
 S12Board s12;
 static uint16_t s_link_ram[0x8000], s_link_regs[16]; // kartduel link board (kartduel_ram)
 
 #define BANK_SIZE 0x200000u
 
+// Recompiler substitutions (new_dynarec.c rs12_subst_source): game code using R3000 load delays the recompiler would
+// interpret on every pass. Each entry: address, word, previous word, replacement with the same effect in that place.
+// Matched on both words, so other games and versions are left alone.
+static const uint32_t s_ndrc_subst[] = {
+	// tektagt polygon loops (NCLIP culling): "beqz t0 / mfc2 t0,MAC0 / bgtz t0": on the fall-through path bgtz still
+	// reads the old t0 = t3 & 0x01000000 (t8 = 0x01000000, set before the loops), which is nonzero there, so it always
+	// branches: an unconditional branch to the same place
+	0x8010e5d4, 0x1d000005, 0x4808c000, 0x10000005,
+	0x8010e800, 0x1d000005, 0x4808c000, 0x10000005,
+	// tektagt: "mfc2 t0,MAC0 / lw t0,(a2) / blez t0 / lui t4,0x900": blez reads MAC0 (the lw is still in its delay);
+	// MAC0 goes to t4 instead (overwritten by the delay slot after the branch has read it)
+	0x801544b8, 0x4808c000, 0x8d4a0000, 0x480cc000,
+	0x801544c0, 0x1900000a, 0x8cc80000, 0x1980000a,
+};
+
 void s12_attach(S12Rom *rom)
 {
+#ifndef DRC_DISABLE
+	{
+		extern const unsigned int *rs12_ndrc_subst;
+		extern int rs12_ndrc_subst_n;
+		rs12_ndrc_subst = s_ndrc_subst;
+		rs12_ndrc_subst_n = (int)(sizeof(s_ndrc_subst) / sizeof(s_ndrc_subst[0]) / 4);
+#ifdef RS12_HARNESS
+		if (getenv("RS12_NOSUBST")) // comparisons
+			rs12_ndrc_subst_n = 0;
+#endif
+	}
+#else
+	(void)s_ndrc_subst;
+#endif
 	memset(&s12, 0, sizeof(s12));
 	memset(s_link_ram, 0, sizeof(s_link_ram));
 	memset(s_link_regs, 0, sizeof(s_link_regs));
@@ -66,7 +96,10 @@ static void map_bank(void)
 	uint8_t *base = s12.rom->rgn[S12_RGN_BANK];
 	if (!base)
 		return;
-	uint8_t *p = base + (s12.bank_entry % s12.bank_count) * BANK_SIZE;
+	const uint32_t o = (s12.bank_entry % s12.bank_count) * BANK_SIZE;
+	uint8_t *p = base + o;
+	if (!s12_rom_all_ready) // (the CPU reads the mapped bank directly: all of it must be there)
+		s12_rom_wait(S12_RGN_BANK, o, BANK_SIZE);
 	if (s12.tektagt) {
 		psxMemMapRead(0x1fa00000u, 0x100000u, p);
 		psxMemMapRead(0x1fb00000u, 0x100000u, NULL);
@@ -80,6 +113,8 @@ static uint16_t bank_read16(uint32_t phys)
 	if (!base)
 		return 0;
 	const uint32_t o = (s12.bank_entry % s12.bank_count) * BANK_SIZE + ((phys - 0x1fa00000u) & (BANK_SIZE - 2));
+	if (!s12_rom_all_ready)
+		s12_rom_wait(S12_RGN_BANK, o, 2);
 	return (uint16_t)(base[o] | (base[o + 1] << 8));
 }
 
@@ -105,6 +140,13 @@ void s12_mem_reset(void)
 		if (n > PSX_ROM_SIZE)
 			n = PSX_ROM_SIZE;
 		memcpy(psxRegs.ptrs.psxR, r->rgn[S12_RGN_MAIN], n);
+		// game routines run natively (s12_hle.c), unless the harness's RS12_NOHLE (comparisons)
+#ifdef RS12_HARNESS
+		if (getenv("RS12_NOHLE"))
+			rs12_hle_lz_head = 0;
+		else
+#endif
+		s12_hle_scan(psxRegs.ptrs.psxR, n);
 	}
 	s12.dmaoffset = 0;
 	s12.bankoffset = 0;
@@ -414,6 +456,8 @@ void psxDma5(uint32_t madr, uint32_t bcr, uint32_t chcr)
 	const int32_t romleft = src_bytes > offset ? (int32_t)((src_bytes - offset) / 4) : 0;
 	if (size > romleft)
 		size = romleft;
+	if (!is_main && !s12_rom_all_ready && size > 0) // (the bank may still be read in the background)
+		s12_rom_wait(S12_RGN_BANK, offset, (uint32_t)size * 4);
 	const int32_t ramleft = (int32_t)(PSX_RAM_SIZE / 4 - addr);
 	if (size > ramleft)
 		size = ramleft;

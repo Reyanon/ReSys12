@@ -140,4 +140,10 @@ void rs12_log_printf(const char *fmt, ...)
 	sceNetSendto(s_sock, line, n, 0, (SceNetSockaddr *)&s_addr, sizeof(s_addr));
 }
 
+#else
+// release builds: the core's direct calls (new_dynarec, emu_if) do nothing
+void rs12_log_printf(const char *fmt, ...)
+{
+	(void)fmt;
+}
 #endif // RS12_ENABLE_LOG

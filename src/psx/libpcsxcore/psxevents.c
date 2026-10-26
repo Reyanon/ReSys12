@@ -64,20 +64,37 @@ static irq_func * const irq_funcs[] = {
 	[PSXINT_S12DMA] = s12_dma5_done,  // ReSys12
 };
 
+volatile u32 rs12_irq_count[PSXINT_COUNT + 1]; // ReSys12 (measurements): events run per type, [PSXINT_COUNT] = calls
+volatile u32 rs12_mtc0_count[16];              // ReSys12 (measurements): MTC0 writes per register (emu_if.c)
+volatile u32 rs12_empty_pc[64][3];             // ReSys12 (measurements): checks with no event due: pc, count, next - cycle
+
 void irq_test(psxCP0Regs *cp0)
 {
 	psxRegisters *regs = cp0TOpsxRegs(cp0);
 	u32 cycle = regs->cycle;
 	u32 irq, irq_bits;
 
+	int fired = 0;
+	rs12_irq_count[PSXINT_COUNT]++;
 	for (irq = 0, irq_bits = regs->interrupt; irq_bits != 0; irq++, irq_bits >>= 1) {
 		if (!(irq_bits & 1))
 			continue;
 		if ((s32)(cycle - regs->event_cycles[irq]) >= 0) {
 			// note: irq_funcs() also modify regs->interrupt
 			regs->interrupt &= ~(1u << irq);
+			rs12_irq_count[irq]++;
 			irq_funcs[irq]();
+			fired = 1;
 		}
+	}
+	if (!fired) { // ReSys12 (measurements): where checks that run nothing come from (pc, cycles left to the next event)
+		u32 i = (regs->pc >> 2) & 63;
+		if (rs12_empty_pc[i][0] != regs->pc) {
+			rs12_empty_pc[i][0] = regs->pc;
+			rs12_empty_pc[i][1] = 0;
+		}
+		rs12_empty_pc[i][1]++;
+		rs12_empty_pc[i][2] = regs->next_interupt - cycle;
 	}
 
 	cp0->n.Cause &= ~0x400;

@@ -71,6 +71,18 @@ int getVMBlock(void)
 	return s_uid;
 }
 
+void *rs12_jit_h8_region(size_t *size)
+{
+	if (s_uid < 0 || s_size < RS12_JIT_H8_SIZE) {
+		if (size)
+			*size = 0;
+		return NULL;
+	}
+	if (size)
+		*size = RS12_JIT_H8_SIZE;
+	return (char *)s_base + s_size - RS12_JIT_H8_SIZE;
+}
+
 int rs12_jit_keep_open = 1; // open the VM domain once and leave it open (no open/close per block)
 // the domain is opened per thread (the sound thread writing the SCSP DSP code got a data abort while the
 // emu thread had it open), so remember the threads that opened it
@@ -125,6 +137,18 @@ void rs12_jit_shutdown(void) {}
 int rs12_jit_keep_open = 1; // code memory is always writable here
 
 int rs12_jit_code_reserve(size_t size) { (void)size; return 0; }
+void *rs12_jit_h8_region(size_t *size)
+{
+	static void *p;
+	if (!p) {
+		p = mmap(NULL, RS12_JIT_H8_SIZE, PROT_READ | PROT_WRITE | PROT_EXEC, MAP_ANONYMOUS | MAP_PRIVATE, -1, 0);
+		if (p == MAP_FAILED)
+			p = NULL;
+	}
+	if (size)
+		*size = p ? RS12_JIT_H8_SIZE : 0;
+	return p;
+}
 void *rs12_jit_code_region(size_t *size) { if (size) *size = 0; return NULL; }
 int rs12_jit_code_uid(void) { return -1; }
 

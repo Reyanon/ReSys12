@@ -9,6 +9,7 @@
 #include "junzip.h"
 
 unsigned char jzBuffer[JZ_BUFFER_SIZE]; // limits maximum zip descriptor size
+void (*rs12_load_tick)(void); // ReSys12: called while a file inflates (frontend loading screen), NULL = not called
 
 // Read ZIP file end record. Will move within file.
 int jzReadEndRecord(JZFile *zip, JZEndRecord *endRecord) {
@@ -198,25 +199,34 @@ int jzReadData(JZFile *zip, JZFileHeader *header, void *buffer) {
             }
 
             strm.next_in = jzBuffer;
-            strm.avail_out = uncompressedLeft;
-            strm.next_out = bytes;
 
             compressedLeft -= strm.avail_in; // inflate will change avail_in
 
-            ret = inflate(&strm, Z_NO_FLUSH);
+            // ReSys12: with a loading screen, inflate this chunk in steps of at most 16KB of output so the screen can
+            // move between them (one call per chunk is a long pause on a big ROM file)
+            do {
+                const unsigned long step = rs12_load_tick && uncompressedLeft > 16384 ? 16384 : uncompressedLeft;
+                strm.avail_out = step;
+                strm.next_out = bytes;
 
-            if(ret == Z_STREAM_ERROR) return ret; // shouldn't happen
+                ret = inflate(&strm, Z_NO_FLUSH);
 
-            switch (ret) {
-                case Z_NEED_DICT:
-                    ret = Z_DATA_ERROR;     /* and fall through */
-                case Z_DATA_ERROR: case Z_MEM_ERROR:
-                    (void)inflateEnd(&strm);
-                    return ret;
-            }
+                if(ret == Z_STREAM_ERROR) return ret; // shouldn't happen
 
-            bytes += uncompressedLeft - strm.avail_out; // bytes uncompressed
-            uncompressedLeft = strm.avail_out;
+                switch (ret) {
+                    case Z_NEED_DICT:
+                        ret = Z_DATA_ERROR;     /* and fall through */
+                    case Z_DATA_ERROR: case Z_MEM_ERROR:
+                        (void)inflateEnd(&strm);
+                        return ret;
+                }
+
+                bytes += step - strm.avail_out; // bytes uncompressed
+                uncompressedLeft -= step - strm.avail_out;
+                if (rs12_load_tick)
+                    rs12_load_tick();
+                // again while input is left or the step was filled (output may still be pending inside zlib)
+            } while (uncompressedLeft && ret != Z_STREAM_END && ret != Z_BUF_ERROR && (strm.avail_in || strm.avail_out == 0));
         }
 
         inflateEnd(&strm);

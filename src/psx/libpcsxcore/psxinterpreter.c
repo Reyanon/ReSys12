@@ -27,6 +27,7 @@
 #include "gte.h"
 #include "psxhle.h"
 #include "psxinterpreter.h"
+#include "s12_hle.h" // ReSys12: game routines run natively
 #include <stddef.h>
 #include <assert.h>
 #include "../include/compiler_features.h"
@@ -1114,6 +1115,12 @@ OP(psxREGIMM) {
 
 OP(psxHLE) {
 	u32 hleCode;
+	if ((code & 0x03ffffff) == RS12_HLE_CODE_LZ) { // ReSys12: a game routine (s12_hle.c), set by execI_
+		dloadFlush(regs_);
+		rs12_hle_lz();
+		regs_->branchSeen = R3000A_BRANCH_HLE_RETURN;
+		return;
+	}
 	if (unlikely(!Config.HLE)) {
 		psxSWCx(regs_, code);
 		return;
@@ -1173,6 +1180,8 @@ static inline void execI_(
 
 	regs->pc += 4;
 	regs->code = fetch(regs, memRLUT, pc);
+	if (unlikely(pc == rs12_hle_lz_head)) // ReSys12: a game routine run natively (s12_hle.c)
+		regs->code = RS12_HLE_OP | RS12_HLE_CODE_LZ;
 	psxBSC[regs->code >> 26](regs, regs->code);
 }
 

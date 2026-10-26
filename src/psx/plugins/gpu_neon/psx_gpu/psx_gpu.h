@@ -240,20 +240,22 @@ typedef struct
   edge_data_struct span_edge_data[MAX_SPANS];
   u32 span_b_offset[MAX_SPANS];
 
-  // ReSys12: split rendering. Two instances parse the same command lists and
-  // each writes only its own band of VRAM rows (top: y < split_y, bottom:
-  // y >= split_y). viewport_start_y/viewport_end_y then hold the draw area
+  // ReSys12: split rendering. Two or three instances parse the same command
+  // lists and each writes only its own band of VRAM rows [split_y0, split_y1)
+  // (the first band starts at row 0, the last ends at 1024, the cuts between
+  // them are shares of the draw area). viewport_start_y/viewport_end_y then hold the draw area
   // clipped to the band; logical_vy0/vy1 keep the draw area as programmed
   // (used for E3/E4 compares, the render-to-texture mask and the split).
   s16 logical_vy0;
   s16 logical_vy1;
-  u8 split_mode;                     // SPLIT_OFF / SPLIT_TOP / SPLIT_BOTTOM
+  u8 split_mode;                     // SPLIT_OFF, else band index + 1 (1 = top)
   u8 split_set;                      // band chosen for the current chunk
   u8 split_solo;                     // chunk drawn by the top instance alone
   u8 split_nw;                       // used entries of split_w
-  u16 split_ratio;                   // top band share of the draw area, /256
+  u8 split_n;                        // number of instances (bands)
+  u16 split_cut[2];                  // band boundaries in the draw area, /256 (cut[1] unused with 2 bands)
   u16 split_nc;                      // used entries of split_c
-  s32 split_y;                       // first row of the bottom band
+  s32 split_y0, split_y1;            // rows of this instance's band [y0, y1)
   u64 split_read_pages;              // texture pages read in this chunk
   s16 split_w[4][4];                 // rects written in this chunk (x0,y0,x1,y1)
   s16 split_c[16][4];                // CLUT rects read in this chunk
@@ -293,9 +295,9 @@ typedef struct
 typedef struct
 {
   u32 key;                           // draw area, 0 = free
-  u16 ratio;                         // top band share, /256
+  u16 cut[2];                        // band boundaries, /256
   u16 used;                          // for replacement
-  u32 sum_a, sum_b, n;               // recent chunks: end of each instance (us)
+  u32 sum[3], n;                     // recent chunks: end of each instance (us)
 } split_ratio_entry;
 extern split_ratio_entry rs12_split_ratio_tab[SPLIT_RATIO_TAB];
 
@@ -303,7 +305,7 @@ extern split_ratio_entry rs12_split_ratio_tab[SPLIT_RATIO_TAB];
 // boundary (both instances must join before the next command)
 #define SPLIT_OFF     0
 #define SPLIT_TOP     1
-#define SPLIT_BOTTOM  2
+#define SPLIT_MAX     3
 #define SPLIT_BARRIER_CMD 0x1000u
 
 typedef struct __attribute__((aligned(16)))

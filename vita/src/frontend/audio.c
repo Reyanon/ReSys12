@@ -181,36 +181,85 @@ static void dec_init(void)
 		s_dec_coef[i] = (int16_t)lrint(c[i] / sum * 32768.0);
 }
 
-// returns output pairs (about frames / 2)
+// the window's dot products with the taps, left and right (interleaved pairs). NEON: 8 pairs a step, the same 32-bit
+// integer sums (checked against the scalar loop on random windows, scratch dectest2.c)
+#if defined(__ARM_NEON) || defined(__ARM_NEON__)
+#include <arm_neon.h>
+static inline void dec_dot(const int16_t *w, int32_t *pl, int32_t *pr)
+{
+	int32x4_t al = vdupq_n_s32(0), ar = vdupq_n_s32(0);
+	for (int k = 0; k < DEC_TAPS; k += 8) {
+		const int16x8x2_t v = vld2q_s16(w + k * 2);
+		const int16x8_t c = vld1q_s16(s_dec_coef + k);
+		al = vmlal_s16(al, vget_low_s16(v.val[0]), vget_low_s16(c));
+		al = vmlal_s16(al, vget_high_s16(v.val[0]), vget_high_s16(c));
+		ar = vmlal_s16(ar, vget_low_s16(v.val[1]), vget_low_s16(c));
+		ar = vmlal_s16(ar, vget_high_s16(v.val[1]), vget_high_s16(c));
+	}
+	const int32x2_t sl = vadd_s32(vget_low_s32(al), vget_high_s32(al));
+	const int32x2_t sr = vadd_s32(vget_low_s32(ar), vget_high_s32(ar));
+	*pl = vget_lane_s32(vpadd_s32(sl, sl), 0);
+	*pr = vget_lane_s32(vpadd_s32(sr, sr), 0);
+}
+#else
+static inline void dec_dot(const int16_t *w, int32_t *pl, int32_t *pr)
+{
+	int32_t l = 0, r = 0;
+	for (int k = 0; k < DEC_TAPS; k++) {
+		l += s_dec_coef[k] * w[k * 2];
+		r += s_dec_coef[k] * w[k * 2 + 1];
+	}
+	*pl = l;
+	*pr = r;
+}
+#endif
+
+// returns output pairs (about frames / 2). The history and the input are put end to end so each window is read in
+// place (shifting the history by one pair for every input pair moved ~16MB a second)
+#define DEC_CHUNK 2048
+static int16_t s_dec_win[(DEC_TAPS - 1 + DEC_CHUNK) * 2];
 static int decimate2(const int16_t *in, int frames, int16_t *out)
 {
 	int n = 0;
-	for (int i = 0; i < frames; i++) {
-		// shift the new pair into the history (DEC_TAPS-1 pairs + this one form the window)
-		if (s_dec_phase) {
-			int32_t l = 0, r = 0;
-			int k = 0;
-			for (; k < DEC_TAPS - 1; k++) {
-				l += s_dec_coef[k] * s_dec_hist[k * 2];
-				r += s_dec_coef[k] * s_dec_hist[k * 2 + 1];
+	while (frames > 0) {
+		const int m = frames < DEC_CHUNK ? frames : DEC_CHUNK;
+		memcpy(s_dec_win, s_dec_hist, sizeof(s_dec_hist));
+		memcpy(s_dec_win + (DEC_TAPS - 1) * 2, in, (size_t)m * 2 * sizeof(int16_t));
+		for (int i = 0; i < m; i++) {
+			// input pair i ends the window s_dec_win[i .. i + DEC_TAPS - 1]
+			if (s_dec_phase) {
+				const int16_t *w = s_dec_win + i * 2;
+				int32_t l, r;
+				dec_dot(w, &l, &r);
+				l = (l + 16384) >> 15;
+				r = (r + 16384) >> 15;
+				out[n * 2] = (int16_t)(l > 32767 ? 32767 : l < -32768 ? -32768 : l);
+				out[n * 2 + 1] = (int16_t)(r > 32767 ? 32767 : r < -32768 ? -32768 : r);
+				n++;
 			}
-			l += s_dec_coef[k] * in[i * 2];
-			r += s_dec_coef[k] * in[i * 2 + 1];
-			l = (l + 16384) >> 15;
-			r = (r + 16384) >> 15;
-			out[n * 2] = (int16_t)(l > 32767 ? 32767 : l < -32768 ? -32768 : l);
-			out[n * 2 + 1] = (int16_t)(r > 32767 ? 32767 : r < -32768 ? -32768 : r);
-			n++;
+			s_dec_phase ^= 1;
 		}
-		s_dec_phase ^= 1;
-		memmove(s_dec_hist, s_dec_hist + 2, sizeof(s_dec_hist) - 2 * sizeof(int16_t));
-		s_dec_hist[(DEC_TAPS - 2) * 2] = in[i * 2];
-		s_dec_hist[(DEC_TAPS - 2) * 2 + 1] = in[i * 2 + 1];
+		memcpy(s_dec_hist, s_dec_win + m * 2, sizeof(s_dec_hist));
+		in += m * 2;
+		frames -= m;
 	}
 	return n;
 }
 
 int rs12_audio_in_half; // input already at 44.1kHz (C352 half-rate output): no decimator
+
+// output gain (as ReST-V): the sound was too quiet on the Vita speaker. Doubled, with a soft limit above 75% of full
+// scale instead of clipping: past the knee the curve bends smoothly towards full scale (same slope at the knee)
+static inline int16_t out_gain(int32_t v)
+{
+	enum { KNEE = 24576, ROOM = 32767 - KNEE };
+	v *= 2;
+	const int32_t m = v < 0 ? -v : v;
+	if (m <= KNEE)
+		return (int16_t)v;
+	const int32_t e = m - KNEE, y = KNEE + (int32_t)((int64_t)e * ROOM / (e + ROOM));
+	return (int16_t)(v < 0 ? -y : y);
+}
 
 void rs12_audio_push(const int16_t *samples, int frames)
 {
@@ -249,7 +298,7 @@ void rs12_audio_push(const int16_t *samples, int frames)
 
 	int n = rs12_resample(samples, frames, step, s_drc_out);
 	for (int i = 0; i < n; i++)
-		ring_put(&head, tail, s_drc_out[i * 2], s_drc_out[i * 2 + 1]);
+		ring_put(&head, tail, out_gain(s_drc_out[i * 2]), out_gain(s_drc_out[i * 2 + 1]));
 	__atomic_store_n(&s_head, head, __ATOMIC_RELEASE);
 }
 

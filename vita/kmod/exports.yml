@@ -1,0 +1,17 @@
+rs12_kctrl_v4:
+  attributes: 0
+  version:
+    major: 1
+    minor: 0
+  main:
+    start: module_start
+    stop: module_stop
+  modules:
+    Rs12KCtrlV4:
+      syscall: true
+      functions:
+        - rs12KCtrlPsState
+        - rs12KCtrlGoHome
+        - rs12KCtrlInstallOnExit
+        - rs12KCtrlProfStart
+        - rs12KCtrlProfRead

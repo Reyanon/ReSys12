@@ -30,6 +30,10 @@ void rs12_jit_code_sync(void *p, size_t len);
 void rs12_jit_shutdown(void); /* before the process exits */
 // memory block id of the reserved region (pcsx_rearmed new_dynarec takes it through getVMBlock())
 int rs12_jit_code_uid(void);
+// code area of the H8 blocks (src/h8): Vita: the last RS12_JIT_H8_SIZE of the region (left out of the R3000A
+// translation cache, TC_REDUCE_BYTES), usable once the recompiler has cleared the block; elsewhere mapped RWX
+#define RS12_JIT_H8_SIZE (1u << 20)
+void *rs12_jit_h8_region(size_t *size);
 
 #ifdef __cplusplus
 }

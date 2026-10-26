@@ -61,6 +61,8 @@ typedef struct {
 #define C352_CHUNK 256 // frames per mix pass (2KB of int32 stack)
 
 static const uint8_t c352_zero_rom[1];
+// ReSys12: called at a key-on with the sample's start (the wave ROM may still be read in the background)
+void (*c352_wave_wait)(uint32_t addr, uint32_t len);
 
 static struct {
 	C352State st;
@@ -159,6 +161,11 @@ void c352_write(uint32_t offset, uint16_t data)
 			C352Voice *v = &c352.st.v[i];
 			if (v->flags & C352_FLG_KEYON) {
 				v->pos = ((uint32_t)v->wave_bank << 16) | v->wave_start;
+				if (c352_wave_wait) { // (256KB from the sample's bank, and the bank a long sample links to)
+					c352_wave_wait(((uint32_t)v->wave_bank << 16) & c352.rom_mask, 0x40000);
+					if (v->flags & C352_FLG_LINK)
+						c352_wave_wait(((uint32_t)v->wave_start << 16) & c352.rom_mask, 0x40000);
+				}
 				v->sample = 0;
 				v->last_sample = 0;
 				v->counter = 0xffff;
@@ -179,6 +186,16 @@ void c352_write(uint32_t offset, uint16_t data)
 static inline int ramp(int cur, int target)
 {
 	return cur > target ? cur - 1 : (cur < target ? cur + 1 : cur);
+}
+
+// ReSys12: n ramp steps at once (the target does not change within a chunk)
+static inline int ramp_n(int cur, int target, uint32_t n)
+{
+	if (cur > target)
+		return (uint32_t)(cur - target) > n ? cur - (int)n : target;
+	if (cur < target)
+		return (uint32_t)(target - cur) > n ? cur + (int)n : target;
+	return cur;
 }
 
 // Interpolated output, bit-exact with MAME: last + (u32)(counter * (sample - last)) >> 16 in unsigned arithmetic,
@@ -212,6 +229,7 @@ static inline __attribute__((always_inline)) void render_pcm_voice_(C352Voice *v
 	int cv0 = v->curr_vol[0], cv1 = v->curr_vol[1], cv2 = v->curr_vol[2], cv3 = v->curr_vol[3];
 	// (-s * vol) >> 8 == (s * -vol) >> 8, so the phase flags fold into signed effective volumes
 	int32_t el = sgn_l * cv0, er = sgn_r * cv1;
+	uint32_t rear_steps = 0;
 
 	for (int i = 0; i < n; i++) {
 		const uint32_t next = counter + freq;
@@ -238,18 +256,20 @@ static inline __attribute__((always_inline)) void render_pcm_voice_(C352Voice *v
 					flags |= C352_FLG_KEYOFF;
 					flags &= ~(uint32_t)C352_FLG_BUSY;
 					sample = 0;
+					n = i + 1; // (the sample ended: this frame is still mixed, later ones are silent)
 				}
 			} else {
 				pos += (flags & C352_FLG_REVERSE) ? (uint32_t)-1 : 1u;
 			}
 		}
 		if ((next ^ counter) & 0x18000) {
-			cv0 = ramp(cv0, tgt0);
-			cv1 = ramp(cv1, tgt1);
-			cv2 = ramp(cv2, tgt2); // rear pair is not mixed but its ramp state is kept exact
-			cv3 = ramp(cv3, tgt3);
-			el = sgn_l * cv0;
-			er = sgn_r * cv1;
+			if (cv0 != tgt0 || cv1 != tgt1) { // (mostly at their targets already)
+				cv0 = ramp(cv0, tgt0);
+				cv1 = ramp(cv1, tgt1);
+				el = sgn_l * cv0;
+				er = sgn_r * cv1;
+			}
+			rear_steps++; // rear pair: not mixed, its ramp state is kept exact (stepped after the loop)
 		}
 		counter = next & 0xffff;
 
@@ -260,10 +280,10 @@ static inline __attribute__((always_inline)) void render_pcm_voice_(C352Voice *v
 			mix[2 * o + 1] += (s * er) >> 8;
 		}
 
-		if (!(flags & C352_FLG_BUSY)) // sample ended: this frame is still mixed, later ones are silent
-			break;
 	}
 
+	cv2 = ramp_n(cv2, tgt2, rear_steps);
+	cv3 = ramp_n(cv3, tgt3, rear_steps);
 	v->pos = pos;
 	v->counter = counter;
 	v->sample = (int16_t)sample;

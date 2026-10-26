@@ -3,6 +3,7 @@
 #include "platform/jit.h"
 
 #include <stdio.h>
+#include <stdlib.h>
 
 #include "rs12_jit.h"
 #include "platform/timer.h"
@@ -48,9 +49,27 @@ int rs12_jit_selftest(char *msg, size_t msg_len)
 	}
 	uint64_t t3 = rs12_time_us();
 
+	// word stores into the code area (as the recompiler emits code) and into ordinary memory: 16KB each
+	enum { WORDS = 4096 };
+	uint32_t *ram = (uint32_t *)malloc(WORDS * 4);
+	volatile uint32_t *jw = (volatile uint32_t *)(base + 0x10000);
+	rs12_jit_code_write_begin();
+	uint64_t t4 = rs12_time_us();
+	for (int i = 0; i < WORDS; i++)
+		jw[i] = (uint32_t)i * 2654435761u;
+	uint64_t t5 = rs12_time_us();
+	rs12_jit_code_write_end((void *)jw, WORDS * 4);
+	volatile uint32_t *rw = ram;
+	uint64_t t6 = rs12_time_us();
+	for (int i = 0; ram && i < WORDS; i++)
+		rw[i] = (uint32_t)i * 2654435761u;
+	uint64_t t7 = rs12_time_us();
+	free(ram);
+
 	int ok = (v1 == 142 && v2 == 107 && v3 == 101);
-	snprintf(msg, msg_len, "JIT %s v=%d,%d,%d size=%uMB first=%lluus open/close=%.2fus",
+	snprintf(msg, msg_len, "JIT %s v=%d,%d,%d size=%uMB first=%lluus open/close=%.2fus 16KB stores: code %lluus ram %lluus",
 		ok ? "OK" : "FAIL", v1, v2, v3, (unsigned)(size >> 20),
-		(unsigned long long)(t1 - t0), (double)(t3 - t2) / 1000.0);
+		(unsigned long long)(t1 - t0), (double)(t3 - t2) / 1000.0, (unsigned long long)(t5 - t4),
+		(unsigned long long)(t7 - t6));
 	return ok ? 0 : -2;
 }

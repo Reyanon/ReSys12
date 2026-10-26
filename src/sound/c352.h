@@ -10,6 +10,7 @@ extern "C" {
 
 // rom: wave ROM (8-bit samples / mu-law per voice flags), size in bytes.
 // clock: chip clock in Hz (System 12: 25401600), divider: clock divider (System 12: 288) -> sample rate clock/divider.
+extern void (*c352_wave_wait)(uint32_t addr, uint32_t len); // ReSys12 (s12_sub.c), NULL = not called
 void c352_init(const uint8_t *rom, uint32_t rom_size, uint32_t clock, int divider);
 void c352_reset(void);
 uint32_t c352_sample_rate(void); // clock / divider (88200 on System 12)

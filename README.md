@@ -50,21 +50,26 @@ screen are simplified when that buys speed.
 - NEON GTE and the gpu_neon software rasterizer running on its own core, fed by an asynchronous command queue.
 - Idle loop skipping for the main CPU and the H8/3002 (polling, timeout and wait loops), so waiting CPUs do not
   burn host time.
-- H8/3002 interpreter with table-driven decoding; C352 on its own core with a lock-free ring buffer to the audio output.
+- H8/3002 recompiler: runs of its program ROM are translated to ARM code once (registers, flags and cycle counts
+  kept exact; checked against the interpreter). C352 on its own core with a lock-free ring buffer to the audio output.
 - KC0xx protection and ROM DMA ported from MAME, with the DMA source fixes needed by Tekken Tag Tournament.
 
 **Rendering (vitaGL)**
 - The emulated GPU writes into GPU-visible texture memory; only changed VRAM rows are converted (15, 8 and 4 bpp).
+- The rasterizer splits each frame into three bands drawn on three cores.
 - Interlaced 480-line games are drawn one field at a time.
 - Vertical games (Tenkomori Shooting) are rotated on the GPU.
 
 **Frontend**
 - Game list with Buttons / Gun / Wheel-Lever tabs and a Playable / All / Favorites filter.
 - Save states (10 slots plus quick save / load), button mapping with turbo and combo keys, duplicate key warnings.
-- Gun games: aim with an analog stick, adjustable sensitivity and crosshair. Driving games: wheel on a stick,
-  gas and brake on the shoulder buttons.
-- Display options: aspect ratio, filter, border color or user artwork, frame rate counter.
-- Per-game settings: save the current display and control settings for one game only.
+- Gun games: aim with an analog stick or the touch screen, adjustable sensitivity and crosshair. Driving games:
+  wheel on a stick, gas and brake on the shoulder buttons.
+- Touch buttons: place any number of on-screen buttons, resize them by their edges and corners.
+- Display options: aspect ratio, filter, border color or user artwork, frame rate counter, display latency
+  (Normal, or Low: about one frame sooner, with an occasional repeated frame).
+- Per-game settings: save the current display and control settings, touch button layout included, for one game only.
+- Updates: the app checks GitHub for a new version when it starts and can install it.
 
 ## 3. Supported Games
 
@@ -74,35 +79,38 @@ files from the parent zip. System 12 has no BIOS.
 **Status**: *Playable*, *Partial* or *Not working* on a PS Vita at 444 MHz. *Partial* sets run, but a known problem
 remains (listed in the notes). Full speed is 60 fps (59.94 Hz).
 
-| Game | Sets (parent first) | Year | Status | Notes |
-|---|---|---|---|---|
-| Tekken Tag Tournament | `tektagt`, `tektagtc1a`, `tektagtub`, `tektagtuc1`, `tektagtjc1` | 1999 | Playable | ~60 fps, short drops in a few stages |
-| Tekken 3 | `tekken3`, `tekken3a`, `tekken3b`, `tekken3c`, `tekken3d`, `tekken3ua`, `tekken3ud`, `tekken3ja`, `tekken3jd`, `tekken3je1` | 1997 | Playable | |
-| Soul Calibur | `soulclbr`, `soulclbrab`, `soulclbrac`, `soulclbrub`, `soulclbruc`, `soulclbrja2`, `soulclbrjb`, `soulclbrjc` | 1998 | Playable | |
-| Ehrgeiz | `ehrgeiz`, `ehrgeizua`, `ehrgeizja` | 1998 | Partial | ~53 fps in fights |
-| Fighting Layer | `fgtlayer`, `fgtlayerja` | 1998 | Playable | |
-| Shin Nihon Pro Wrestling Toukon Retsuden 3 Arcade Edition | `toukon3` | 1997 | Playable | ~57 fps in matches |
-| Libero Grande | `lbgrande` | 1997 | Playable | the game runs at 30 fps |
-| Super World Stadium '98 | `sws98` | 1998 | Playable | |
-| Super World Stadium '99 | `sws99` | 1999 | Playable | |
-| Mr. Driller | `mrdrillr`, `mrdrillrja2` | 1999 | Playable | |
-| Aqua Rush | `aquarush` | 1999 | Playable | |
-| Tenkomori Shooting | `tenkomor`, `tenkomorja1` | 1998 | Playable | vertical screen |
-| Paca Paca Passion | `pacapp` | 1998 | Partial | falling notes may be drawn twice |
-| Paca Paca Passion 2 | `pacapp2` | 1999 | Partial | as above |
-| Paca Paca Passion Special | `pacappsp` | 1999 | Partial | as above |
-| Derby Quiz My Dream Horse | `mdhorse` | 1998 | Playable | |
-| Kaiun Quiz | `kaiunqz` | 1999 | Playable | |
-| Point Blank 2 / Gunbarl | `ptblank2`, `gunbarl` | 1999 | Partial | gun on an analog stick; may stop during play |
-| Ghoul Panic / Oh! Bakyuuun | `ghlpanic`, `ohbakyuun` | 1999 | Playable | gun on an analog stick |
-| Golgo 13 | `golgo13` | 1999 | Partial | the board tests its ROMs for a while after power-on |
-| Golgo 13 Kiseki no Dandou | `g13knd` | 2000 | Partial | as above |
-| Techno Drive | `technodr` | 1998 | Playable | wheel on an analog stick |
-| Attack Pla Rail | `aplarail` | 1998 | Playable | lever on an analog stick |
-| Kart Duel | `kartduel`, `kartduelja` | 2000 | Partial | no link play |
-| Tekken Tag Tournament (Japan) | `tektagtja3`, `tektagtjb` | 1999 | Not working | bad dumps, also not working in MAME |
-| Super World Stadium 2000 / 2001 | `sws2000`, `sws2001` | 2000 | Not working | also not working in MAME |
-| Um Jammer Lammy NOW!, Quest for Fame, Truck Kyosokyoku | `ujlnow`, `questff`, `truckk` | 1999 | Not working | CD-XA board, not emulated |
+**FPS**: emulated frames per second measured on a PS Vita at 444 MHz in a gameplay scene (30 seconds with the
+buttons pressed, latest measurement). Some games draw fewer new pictures than that on purpose (noted).
+
+| Game | Sets (parent first) | Year | Status | FPS | Notes |
+|---|---|---|---|---|---|
+| Tekken Tag Tournament | `tektagt`, `tektagtc1a`, `tektagtub`, `tektagtuc1`, `tektagtjc1` | 1999 | Playable | 59.94 | |
+| Tekken 3 | `tekken3`, `tekken3a`, `tekken3b`, `tekken3c`, `tekken3d`, `tekken3ua`, `tekken3ud`, `tekken3ja`, `tekken3jd`, `tekken3je1` | 1997 | Playable | 59.94 | |
+| Soul Calibur | `soulclbr`, `soulclbrab`, `soulclbrac`, `soulclbrub`, `soulclbruc`, `soulclbrja2`, `soulclbrjb`, `soulclbrjc` | 1998 | Playable | 59.93 | |
+| Ehrgeiz | `ehrgeiz`, `ehrgeizua`, `ehrgeizja` | 1998 | Playable | 59.94 | |
+| Fighting Layer | `fgtlayer`, `fgtlayerja` | 1998 | Playable | 59.89 | |
+| Shin Nihon Pro Wrestling Toukon Retsuden 3 Arcade Edition | `toukon3` | 1997 | Playable | 59.94 | |
+| Libero Grande | `lbgrande` | 1997 | Playable | 59.94 | the game draws 30 pictures a second |
+| Super World Stadium '98 | `sws98` | 1998 | Playable | 59.90 | |
+| Super World Stadium '99 | `sws99` | 1999 | Playable | 59.94 | |
+| Mr. Driller | `mrdrillr`, `mrdrillrja2` | 1999 | Playable | 59.94 | |
+| Aqua Rush | `aquarush` | 1999 | Playable | 59.94 | |
+| Tenkomori Shooting | `tenkomor`, `tenkomorja1` | 1998 | Playable | 59.83 | vertical screen |
+| Paca Paca Passion | `pacapp` | 1998 | Partial | 59.85 | falling notes may be drawn twice |
+| Paca Paca Passion 2 | `pacapp2` | 1999 | Partial | 59.86 | as above |
+| Paca Paca Passion Special | `pacappsp` | 1999 | Partial | 59.94 | as above |
+| Derby Quiz My Dream Horse | `mdhorse` | 1998 | Playable | 59.94 | the game draws about 40 pictures a second |
+| Kaiun Quiz | `kaiunqz` | 1999 | Playable | 59.94 | the game draws about 35 pictures a second |
+| Point Blank 2 / Gunbarl | `ptblank2`, `gunbarl` | 1999 | Partial | 59.94 | gun on an analog stick or touch; may stop during play |
+| Ghoul Panic / Oh! Bakyuuun | `ghlpanic`, `ohbakyuun` | 1999 | Playable | 59.94 | gun on an analog stick or touch |
+| Golgo 13 | `golgo13` | 1999 | Partial | 59.94 | the board tests its ROMs for a while after power-on |
+| Golgo 13 Kiseki no Dandou | `g13knd` | 2000 | Partial | 59.94 | as above |
+| Techno Drive | `technodr` | 1998 | Playable | 59.94 | wheel on an analog stick |
+| Attack Pla Rail | `aplarail` | 1998 | Playable | 59.94 | lever on an analog stick; the game draws 40 pictures a second |
+| Kart Duel | `kartduel`, `kartduelja` | 2000 | Partial | | no link play |
+| Tekken Tag Tournament (Japan) | `tektagtja3`, `tektagtjb` | 1999 | Not working | | bad dumps, also not working in MAME |
+| Super World Stadium 2000 / 2001 | `sws2000`, `sws2001` | 2000 | Not working | | also not working in MAME |
+| Um Jammer Lammy NOW!, Quest for Fame, Truck Kyosokyoku | `ujlnow`, `questff`, `truckk` | 1999 | Not working | | CD-XA board, not emulated |
 
 ## 4. Download
 
@@ -169,7 +177,8 @@ Files written by the emulator:
 | What | Path |
 |---|---|
 | Settings and favorites | `ux0:data/resys12/settings.cfg`, `ux0:data/resys12/favorites.cfg` |
-| Per-game settings | `ux0:data/resys12/cfg/<set>.cfg` |
+| Per-game settings | `ux0:data/resys12/cfg/<set>.cfg` (touch layout: `<set>.touch`) |
+| Touch button layout | `ux0:data/resys12/touch.cfg` |
 | EEPROM (test mode settings, records) | `ux0:data/resys12/nvram/<set>.eep` |
 | Save states | `ux0:data/resys12/state/<set>_<slot>.st` |
 | ROM cache | `ux0:data/resys12/cache/` (safe to delete) |
@@ -203,7 +212,7 @@ Options opened from the game list edit the global settings.
 | Exit | L + R + SELECT + START |
 
 The in-game menu provides: Resume, Reset, Test mode (service DIP switch), Save states (10 slots), Display
-(frame rate counter, aspect ratio, filter, border), Controls (button mapping, turbo, combo keys, analog stick,
+(frame rate counter, aspect ratio, filter, border, latency), Controls (button mapping, turbo, combo keys, analog stick,
 gun / wheel / lever settings for the games that use them), per-game settings and game selection.
 
 **Turbo.** Pick one *Turbo key* and the game button it fires (*Turbo button*), plus the speed.
@@ -212,7 +221,10 @@ While the turbo key is held, that game button fires repeatedly.
 **Combo keys.** A Vita button can press two game buttons at once (for example the Tekken tag throw).
 
 **Gun games.** The aim follows the analog stick (stick position or stick moves the aim), R is the trigger. Golgo 13
-uses L as the scope sensor.
+uses L as the scope sensor. With *Touch gun* on, touching the screen aims and fires; touch buttons keep working.
+
+**Touch buttons.** Controls > Touch controls > Edit touch layout: drag on an empty spot to add a button, tap it to
+pick its key, drag it to move it, and drag an edge or corner to resize it (6-pixel steps).
 
 **Driving games.** The wheel or lever follows an analog stick (the d-pad also works), R is gas and L is brake.
 
@@ -235,22 +247,11 @@ sudo apt install -y build-essential cmake ninja-build git python3 zlib1g-dev
 ### PS Vita
 
 ```bash
-bash tools/build.sh vita
-# output: build-vita/resys12.vpk, build-vita/eboot.bin
+cmake -S vita -B build-vita -G Ninja -DCMAKE_TOOLCHAIN_FILE="$VITASDK/share/vita.toolchain.cmake" \
+  -DCMAKE_BUILD_TYPE=Release -DRS12_LOG=OFF -DRS12_DEBUG_TOOLS=OFF
+cmake --build build-vita              # build-vita/eboot.bin
+cmake --build build-vita --target vpk # build-vita/resys12.vpk
 ```
-
-### Desktop test harness
-
-A headless harness runs the System 12 core on a PC and prints per-frame video and audio hashes. It is used as the
-reference for every optimization.
-
-```bash
-bash tools/build.sh pc
-./build-pc/harness --roms path/to/roms --game tektagt --frames 3600 --checkpoint 600
-```
-
-An ARM build of the harness (`tools/build_arm_harness.sh`, run under `qemu-arm`) exercises the recompiler and
-the NEON code with the same hashes, and creates save states in the Vita layout.
 
 ## 8. Project Layout
 
@@ -262,17 +263,16 @@ src/sound/     C352
 src/romload/   MAME set tables, zip reader, ROM cache
 src/sys/       Vita heap and JIT memory
 vita/          PS Vita port: frontend, video output (vitaGL), platform code, LiveArea assets
-tools/         Build scripts, desktop harness, table generators, bench and app art tools
 ```
 
 ## 9. Accuracy and Testing
 
-- Every performance change is checked against the desktop harness: frame and audio hashes are compared
-  before and after over thousands of frames on a set of reference games.
+- Every performance change is checked against a desktop test harness (kept in the development tree): frame and
+  audio hashes are compared before and after over thousands of frames on a set of reference games.
 - Changes that alter the hashes on purpose (idle-loop skipping, relaxed synchronization) are checked with save
   states and recorded input against reference screenshots, so that the game reaches the same scenes with the same
   picture and sound.
-- The recompiler is compared against the interpreter in the ARM harness.
+- The R3000A and H8/3002 recompilers are compared against their interpreters in an ARM build of the harness.
 - Sound output is recorded on the device and compared with MAME.
 
 ## 10. License and Credits
