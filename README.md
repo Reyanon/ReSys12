@@ -63,6 +63,9 @@ screen are simplified when that buys speed.
 **Frontend**
 - Game list with Buttons / Gun / Wheel-Lever tabs and a Playable / All / Favorites filter.
 - Save states (10 slots plus quick save / load), button mapping with turbo and combo keys, duplicate key warnings.
+- Two players and external controllers: a 1P and a 2P controller, each with its own device. Button setups belong to
+  the device (Vita, DualShock 4, Switch Pro Controller, ...). Bluetooth pads the Vita does not accept by itself work
+  through the bundled [RePad](https://github.com/Reyanon/RePad) plugin.
 - Gun games: aim with an analog stick or the touch screen, adjustable sensitivity and crosshair. Driving games:
   wheel on a stick, gas and brake on the shoulder buttons.
 - Touch buttons: place any number of on-screen buttons, resize them by their edges and corners.
@@ -215,16 +218,43 @@ The in-game menu provides: Resume, Reset, Test mode (service DIP switch), Save s
 (frame rate counter, aspect ratio, filter, border, latency), Controls (button mapping, turbo, combo keys, analog stick,
 gun / wheel / lever settings for the games that use them), per-game settings and game selection.
 
+**Controllers and two players.** Controls has a *1P Controller* and a *2P Controller* page. Each page sets the
+player's *Device* (Auto, Vita, Controller 1-4 or None) and the buttons, analog stick, turbo and combo keys of that
+device. Left / Right on the 1P Controller or 2P Controller row also changes the device. Auto gives 1P the Vita's own
+controls and 2P the first controller; on a PS TV, 1P and 2P take the controllers in order. The 2P page is shown while a
+second device is connected.
+
+Button setups belong to the device, not to the player. The Vita, a DualShock 4 and a Switch Pro Controller each keep
+their own, so a controller brings its setup when it moves from 2P to 1P. A second controller of the same kind has its
+own setup too. Per-game settings store them the same way.
+
+To set a key, select its row, press Cross (or Circle), then press the button to use. Only the player's own device is
+read, so a button on another controller does not end up in the Vita's setup. Square sets the row to None where None is
+allowed. Controllers have L2, R2, L3 and R3 as keys of their own (L1 and R1 are L and R); in the menus L2 and R2 also
+work as L and R.
+
+**Input engine** (Controls > Input engine):
+
+| Engine | When to use it |
+|---|---|
+| Native (default) | The Vita's own controls, and controllers the system supports by itself (DualShock 3 / 4 on a PS TV). |
+| RePad | Bluetooth controllers the Vita does not accept, such as the Nintendo Switch Pro Controller (and pads in Switch Pro mode), or a DualShock 4 / DualSense on a handheld Vita. The plugin comes with the app, nothing to install. Pair the controller in Settings > Devices > Bluetooth Devices. A controller that was already connected when the app started has to connect again. |
+| VitaControl | Listed when the VitaControl plugin is in a plugin list. Enough when only 1P uses a controller. Switching to or from it restarts the Vita (the app asks first). |
+
 **Turbo.** Pick one *Turbo key* and the game button it fires (*Turbo button*), plus the speed.
 While the turbo key is held, that game button fires repeatedly.
 
-**Combo keys.** A Vita button can press two game buttons at once (for example the Tekken tag throw).
+**Combo keys.** A key can press two keys at once (for example the Tekken tag throw). Square, Triangle, Cross,
+Circle, L, R and a controller's L2, R2, L3 and R3 can be combo keys. Confirm on a row, then pick the first key and the
+second key.
 
 **Gun games.** The aim follows the analog stick (stick position or stick moves the aim), R is the trigger. Golgo 13
 uses L as the scope sensor. With *Touch gun* on, touching the screen aims and fires; touch buttons keep working.
 
-**Touch buttons.** Controls > Touch controls > Edit touch layout: drag on an empty spot to add a button, tap it to
-pick its key, drag it to move it, and drag an edge or corner to resize it (6-pixel steps).
+**Touch buttons.** Controls > Touch controls > Edit touch layout: drag on an empty spot to add a button, drag it to
+move it, and drag an edge or corner to resize it (6-pixel steps). Tap a button to pick its key, a *Combo* (two keys
+at once), *Duplicate* (a copy of the same size and key, whose key is picked next) or *Delete*. Done or START leaves
+the editor.
 
 **Driving games.** The wheel or lever follows an analog stick (the d-pad also works), R is gas and L is brake.
 

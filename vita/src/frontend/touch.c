@@ -73,7 +73,8 @@ int rs12_touch_add(int x, int y, int w, int h, int key)
 	a->y = (int16_t)y;
 	a->w = (int16_t)w;
 	a->h = (int16_t)h;
-	a->key = (int8_t)(key >= 0 && key < RS12_TKEY_COUNT ? key : RS12_KEY_CROSS);
+	a->key = (int16_t)((key >= 0 && key < RS12_TKEY_COUNT) || (key > RS12_TKEY_COMBO && key < RS12_TKEY_COMBO + (1 << RS12_KEY_COUNT))
+		? key : RS12_KEY_CROSS);
 	s_gen++;
 	return s_n++;
 }
@@ -110,6 +111,13 @@ uint32_t rs12_touch_key_code(int key)
 	static const uint32_t dirs[4] = { SCE_CTRL_UP, SCE_CTRL_DOWN, SCE_CTRL_LEFT, SCE_CTRL_RIGHT };
 	if (key >= RS12_TKEY_UP && key < RS12_TKEY_COUNT)
 		return dirs[key - RS12_TKEY_UP];
+	if (RS12_TKEY_IS_COMBO(key)) {
+		uint32_t b = 0;
+		for (int k = 0; k < RS12_KEY_COUNT; k++)
+			if ((key - RS12_TKEY_COMBO) & (1 << k))
+				b |= rs12_key_code(k);
+		return b;
+	}
 	return rs12_key_code(key);
 }
 
@@ -118,6 +126,14 @@ const char *rs12_touch_key_name(int key)
 	static const char *const dirs[4] = { "Up", "Down", "Left", "Right" };
 	if (key >= RS12_TKEY_UP && key < RS12_TKEY_COUNT)
 		return dirs[key - RS12_TKEY_UP];
+	if (RS12_TKEY_IS_COMBO(key)) {
+		static char nm[32];
+		nm[0] = 0;
+		for (int k = 0; k < RS12_KEY_COUNT; k++)
+			if ((key - RS12_TKEY_COMBO) & (1 << k))
+				snprintf(nm + strlen(nm), sizeof(nm) - strlen(nm), "%s%s", nm[0] ? "+" : "", rs12_key_name(k));
+		return nm;
+	}
 	return rs12_key_name(key);
 }
 

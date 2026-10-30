@@ -433,6 +433,32 @@ void rs12_video_layer_rot(int slot, int rot)
 	if (slot >= 0 && slot < NLAYER)
 		s_layer[slot].rot = rot & 3;
 }
+static RS12Strip s_strip[RS12_NSTRIP];
+static int s_nstrip, s_strip_y0, s_strip_y1;
+void rs12_video_strips(const RS12Strip *s, int n, int y0, int y1)
+{
+	if (n > RS12_NSTRIP)
+		n = RS12_NSTRIP;
+	for (int i = 0; i < n; i++)
+		s_strip[i] = s[i];
+	s_nstrip = n;
+	s_strip_y0 = y0;
+	s_strip_y1 = y1;
+}
+static void draw_quad_uv(float x0, float y0, float x1, float y1, const float *uv);
+static void draw_strips(void)
+{
+	for (int i = 0; i < s_nstrip; i++) {
+		const RS12Strip *s = &s_strip[i];
+		const int y0 = s->y > s_strip_y0 ? s->y : s_strip_y0, y1 = s->y + s->t->h < s_strip_y1 ? s->y + s->t->h : s_strip_y1;
+		if (y1 <= y0)
+			continue;
+		const float v0 = (float)(y0 - s->y) / s->t->h, v1 = (float)(y1 - s->y) / s->t->h;
+		const float uv[8] = { 0, v0, 1, v0, 0, v1, 1, v1 };
+		glBindTexture(GL_TEXTURE_2D, s->t->gl);
+		draw_quad_uv((float)s->x, (float)y0, (float)(s->x + s->t->w), (float)y1, uv);
+	}
+}
 void rs12_video_layer(int slot, RS12Tex *t, int x, int y, int w, int h)
 {
 	if (slot < 0 || slot >= NLAYER)
@@ -644,6 +670,14 @@ static void draw_scene(void)
 	int blend = 0;
 	for (int o = 0; o < NLAYER; o++) {
 		const int k = o ? o - 1 : NLAYER - 1;
+		if (o == 2 && s_nstrip) { // (over slot 0, under the focus outline)
+			if (!blend) {
+				glEnable(GL_BLEND);
+				glBlendFunc(GL_ONE, GL_ONE_MINUS_SRC_ALPHA);
+				blend = 1;
+			}
+			draw_strips();
+		}
 		RS12Tex *t = s_layer[k].t;
 		if (!t)
 			continue;

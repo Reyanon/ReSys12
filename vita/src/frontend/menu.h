@@ -10,6 +10,7 @@
 enum {
 	RS12_KEY_CROSS, RS12_KEY_CIRCLE, RS12_KEY_SQUARE, RS12_KEY_TRIANGLE,
 	RS12_KEY_L, RS12_KEY_R, RS12_KEY_SELECT, RS12_KEY_START,
+	RS12_KEY_L2, RS12_KEY_R2, RS12_KEY_L3, RS12_KEY_R3, // (a controller's; settings before them: keyver < 2, None was 8)
 	RS12_KEY_COUNT
 };
 #define RS12_KEY_NONE RS12_KEY_COUNT
@@ -46,6 +47,20 @@ enum { RS12_TURBO_FAST, RS12_TURBO_MEDIUM, RS12_TURBO_SLOW, RS12_TURBO_SPEED_COU
 // combo keys (as in Tekken 6): a Vita button (Square, Triangle, Cross, Circle, L, R) can act as two other Vita buttons
 // pressed together. RS12_COMBO_KEYS = keys RS12_KEY_CROSS..RS12_KEY_R
 #define RS12_COMBO_KEYS 6
+// keys that can be combo keys: those six, then a controller's L2 / R2 / L3 / R3 (the pairs stay of the six)
+#define RS12_COMBO_SRC 10
+#define RS12_PROFILES 13 // re_pad's RE_PAD_PROFILES: the keys belong to a device (Vita, each kind of controller)
+#define RS12_PORTS 2 // players with their own controls (Port 1 = 1P, Port 2 = 2P)
+
+// one player's controls (Controls > Port N Controls; RetroArch style)
+typedef struct {
+	int keymap[RS12_ACT_COUNT]; // RS12_KEY_* (buttons 2-6 may be RS12_KEY_NONE)
+	int stick;         // RS12_STICK_* (analog stick used as lever)
+	int turbo_key;     // Vita button that triggers turbo, RS12_KEY_NONE = off
+	int turbo_btn;     // game button to turbo, 1..6
+	int turbo_speed;   // RS12_TURBO_*
+	int combo[RS12_KEY_COUNT]; // per Vita key: 0 = normal, else the two keys it presses (bit = RS12_KEY_*)
+} rs12_port;
 
 typedef struct {
 	int fps;           // FPS display
@@ -56,8 +71,9 @@ typedef struct {
 	int border;        // RS12_BORDER_*
 	int border_color;  // RS12_BCOL_*
 	int rotate;        // RS12_ROT_*
-	int keymap[RS12_ACT_COUNT]; // RS12_KEY_* (buttons 2-6 may be RS12_KEY_NONE)
-	int stick;         // RS12_STICK_* (analog stick used as lever)
+	rs12_port port[RS12_PROFILES]; // controls profiles: one per device (re_pad_profile), not per player
+	int pad_src[RS12_PORTS]; // RE_PAD_SRC_* of each player's controller (global only)
+	int input_engine;  // RE_PAD_ENGINE_* (global only): Native or the bundled RePad plugin
 	int aim_stick;     // RS12_AIM_LEFT / RIGHT: the stick that aims a gun
 	int aim_mode;      // RS12_AIM_POSITION (stick position = screen position) / MOVE (stick moves the aim)
 	int gun_sens;      // gun aim sensitivity 1..10 (10 = direct)
@@ -71,11 +87,7 @@ typedef struct {
 	int touch_keys;    // the touch screen key areas press their keys
 	int touch_show;    // the key areas are drawn over the game
 	int touch_gun;     // gun games: the touch point aims and fires (the key areas are off then); else the analog stick
-	int turbo_key;     // Vita button that triggers turbo, RS12_KEY_NONE = off
-	int turbo_btn;     // game button to turbo, 1..6
-	int turbo_speed;   // RS12_TURBO_*
-	int combo[RS12_COMBO_KEYS]; // per Vita key: 0 = normal, else the two keys it presses (bit = RS12_KEY_*)
-	int confirm;       // RS12_CONFIRM_*
+	int confirm;      // RS12_CONFIRM_*
 	int theme;         // RS12_THEME_* (global only)
 	int latency;       // RS12_LATENCY_* (global only): display pacing
 	int list_filter;   // RS12_LIST_*
@@ -89,7 +101,8 @@ extern int rs12_dip_service;
 // frames per turbo period (press + release): Fast 4, Medium 6, Slow 8
 static inline int rs12_turbo_period(int speed) { return speed == 0 ? 4 : speed == 1 ? 6 : 8; }
 void rs12_settings_defaults(void);
-void rs12_settings_default_keys(void);
+void rs12_settings_default_keys(void);     // every port and the gun / wheel / touch controls
+void rs12_settings_default_port(int port); // one port's buttons, stick, turbo and combo keys
 void rs12_settings_load(void);
 void rs12_settings_save(void);
 uint32_t rs12_key_code(int key);       // RS12_KEY_* -> SCE_CTRL_* (0 for RS12_KEY_NONE)

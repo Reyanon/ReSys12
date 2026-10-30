@@ -218,6 +218,7 @@ void ui_clip_y(UiCanvas *c, int y0, int y1)
 	c->cy1 = y1 > c->h ? c->h : y1;
 }
 
+const RS12Tex *ui_tex(UiCanvas *c) { return c->cur >= 0 ? c->tex[c->cur] : NULL; }
 void ui_canvas_move(UiCanvas *c, int x, int y)
 {
 	c->x = x;
@@ -482,7 +483,10 @@ static const SGlyph *scaled_glyph(int si, int k, int ph)
 	return sg;
 }
 
-static void cov_blit(UiCanvas *c, const uint8_t *cov, int gw, int gh, int x0, int y0, uint32_t col, int cx0, int cx1)
+// noipa: with LTO, GCC 15.2 took cx0 as always 0 here (the left clip became the canvas edge: scrolling help ran out
+// of its window). Kept out of interprocedural guesses, the clip is read as passed
+__attribute__((noipa)) static void cov_blit(UiCanvas *c, const uint8_t *cov, int gw, int gh, int x0, int y0, uint32_t col,
+	int cx0, int cx1)
 {
 	const int bx0 = x0 < cx0 ? cx0 : x0, bx1 = x0 + gw > cx1 ? cx1 : x0 + gw;
 	if (bx1 <= bx0)
@@ -493,9 +497,10 @@ static void cov_blit(UiCanvas *c, const uint8_t *cov, int gw, int gh, int x0, in
 		if (yy < c->cy0 || yy >= c->cy1)
 			continue;
 		uint32_t *row = c->px + (size_t)yy * c->w;
-		const uint8_t *cr = cov + py * gw - x0;
+		const uint8_t *cr = cov + py * gw; // (indexed from the glyph's own start: a pointer before it let the compiler
+		                                   // drop the left clip)
 		for (int px = bx0; px < bx1; px++) {
-			const int a = cr[px];
+			const int a = cr[px - x0];
 			if (a)
 				row[px] = over(row[px], premul(col, (uint8_t)a));
 		}

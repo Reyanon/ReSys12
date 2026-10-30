@@ -25,6 +25,7 @@
 #include "platform/log.h"
 #include "platform/timer.h"
 #include "rs12_jit.h"
+#include "common/re_pad.h"
 #include "frontend/audio.h"
 #include "frontend/menu.h"
 #include "frontend/resample.h"
@@ -1007,15 +1008,18 @@ static uint32_t analog_input(const SceCtrlData *pad)
 
 // ---- input (ReST-V map_input): d-pad and analog stick (setting) = lever, game buttons 1-6 / coin / start = configured Vita buttons
 // (default Square/Triangle/Cross/Circle/R/L, SELECT, START), one turbo key. Buttons held with a system combo (SELECT+START menu,
-// SELECT+L / SELECT+R quick save / load) are not passed to the game ----
-static void map_input(const SceCtrlData *pad, unsigned frame)
+// SELECT+L / SELECT+R quick save / load) are not passed to the game. 1P and 2P each read their own controller (re_pad) with
+// their own port settings (keys, stick, turbo, combo keys: g_set.port). The gun / wheel / lever is 1P's ----
+static int sys_combo(uint32_t b)
+{
+	return (b & SCE_CTRL_SELECT) && (b & (SCE_CTRL_START | SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER));
+}
+static uint32_t map_player(int pl, const SceCtrlData *pad, unsigned frame, uint32_t *sys)
 {
 	const uint32_t b = pad->buttons;
-	if ((b & SCE_CTRL_SELECT) && (b & (SCE_CTRL_START | SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER))) {
-		s12.in.player[0] = 0;
-		s12.in.system = rs12_dip_service ? S12_SYS_DSW_SERVICE : 0;
-		return;
-	}
+	// this player's buttons, stick, turbo and combo keys: those of the device it reads (they go with the device)
+	const rs12_port *pr = &g_set.port[re_pad_player_profile(pl)];
+	const int *km = pr->keymap;
 	uint32_t p = 0, s = 0;
 	if (b & SCE_CTRL_UP) p |= S12_IN_UP;
 	if (b & SCE_CTRL_DOWN) p |= S12_IN_DOWN;
@@ -1023,22 +1027,22 @@ static void map_input(const SceCtrlData *pad, unsigned frame)
 	if (b & SCE_CTRL_RIGHT) p |= S12_IN_RIGHT;
 	// analog stick: tilting more than 48 from center 128 gives that direction (diagonals included)
 	// gun / wheel / lever games: the aim stick is not a lever (analog_input below)
-	const int aim_left = analog_stick() == RS12_AIM_LEFT;
-	const int aim_right = analog_stick() == RS12_AIM_RIGHT;
-	if ((g_set.stick == RS12_STICK_LEFT || g_set.stick == RS12_STICK_BOTH) && !aim_left) {
+	const int aim_left = !pl && analog_stick() == RS12_AIM_LEFT;
+	const int aim_right = !pl && analog_stick() == RS12_AIM_RIGHT;
+	if ((pr->stick == RS12_STICK_LEFT || pr->stick == RS12_STICK_BOTH) && !aim_left) {
 		if (pad->ly < 80) p |= S12_IN_UP;
 		if (pad->ly > 176) p |= S12_IN_DOWN;
 		if (pad->lx < 80) p |= S12_IN_LEFT;
 		if (pad->lx > 176) p |= S12_IN_RIGHT;
 	}
-	if ((g_set.stick == RS12_STICK_RIGHT || g_set.stick == RS12_STICK_BOTH) && !aim_right) {
+	if ((pr->stick == RS12_STICK_RIGHT || pr->stick == RS12_STICK_BOTH) && !aim_right) {
 		if (pad->ry < 80) p |= S12_IN_UP;
 		if (pad->ry > 176) p |= S12_IN_DOWN;
 		if (pad->rx < 80) p |= S12_IN_LEFT;
 		if (pad->rx > 176) p |= S12_IN_RIGHT;
 	}
-	if (rs12_input_rot) {
-		// the Vita is held turned (Rotate Vertical L / R): turn the screen directions back into the game's
+	if (rs12_input_rot && re_pad_port(pl) == 0 && !re_pad_is_tv()) {
+		// the Vita is held turned (its own controls only, not a controller) (Rotate Vertical L / R): turn the screen directions back into the game's
 		// (90: screen right = game up; 270: screen left = game up)
 		const int u = (p & S12_IN_UP) != 0, d = (p & S12_IN_DOWN) != 0, l = (p & S12_IN_LEFT) != 0, r = (p & S12_IN_RIGHT) != 0;
 		p &= ~(uint32_t)(S12_IN_UP | S12_IN_DOWN | S12_IN_LEFT | S12_IN_RIGHT);
@@ -1050,32 +1054,39 @@ static void map_input(const SceCtrlData *pad, unsigned frame)
 	static const uint32_t s12_btn[RS12_GAME_BUTTONS] = { S12_IN_B1, S12_IN_B2, S12_IN_B3, S12_IN_B4, S12_IN_B5, S12_IN_B6 };
 	// turbo: while the turbo key (None = off) is held, the turbo button is pressed for the first half of each period. The turbo key's
 	// normal mapping is not used
-	const uint32_t tm = rs12_key_code(g_set.turbo_key);
+	const uint32_t tm = rs12_key_code(pr->turbo_key);
 	// combo keys: a key with a combo acts as its two keys pressed together (instead of its own mapping)
 	uint32_t vb = b, add = 0;
-	for (int k = 0; k < RS12_COMBO_KEYS; k++)
-		if (g_set.combo[k] && (b & rs12_key_code(k))) {
+	for (int k = 0; k < RS12_KEY_COUNT; k++)
+		if (pr->combo[k] && (b & rs12_key_code(k))) {
 			vb &= ~rs12_key_code(k);
-			for (int j = 0; j < RS12_COMBO_KEYS; j++)
-				if (g_set.combo[k] & (1 << j))
+			for (int j = 0; j < RS12_KEY_COUNT; j++)
+				if (pr->combo[k] & (1 << j))
 					add |= rs12_key_code(j);
 		}
 	const uint32_t nb = (vb | add) & ~tm;
-	if (tm && (b & tm) && g_set.turbo_btn >= 1 && g_set.turbo_btn <= RS12_GAME_BUTTONS) {
-		const unsigned per = (unsigned)rs12_turbo_period(g_set.turbo_speed);
+	if (tm && (b & tm) && pr->turbo_btn >= 1 && pr->turbo_btn <= RS12_GAME_BUTTONS) {
+		const unsigned per = (unsigned)rs12_turbo_period(pr->turbo_speed);
 		if (frame % per < per / 2)
-			p |= s12_btn[g_set.turbo_btn - 1];
+			p |= s12_btn[pr->turbo_btn - 1];
 	}
 	for (int k = 0; k < rs12_menu_buttons(); k++)
-		if (nb & rs12_key_code(g_set.keymap[RS12_ACT_B1 + k]))
+		if (nb & rs12_key_code(km[RS12_ACT_B1 + k]))
 			p |= s12_btn[k];
-	if (nb & rs12_key_code(g_set.keymap[RS12_ACT_COIN]))
-		s |= S12_SYS_COIN1;
-	if (nb & rs12_key_code(g_set.keymap[RS12_ACT_START]))
+	if (nb & rs12_key_code(km[RS12_ACT_COIN]))
+		s |= pl ? S12_SYS_COIN2 : S12_SYS_COIN1;
+	if (nb & rs12_key_code(km[RS12_ACT_START]))
 		p |= S12_IN_START;
+	*sys |= s;
+	return p;
+}
+static void map_input(const SceCtrlData *pad, const SceCtrlData *pad2, unsigned frame)
+{
+	uint32_t s = 0;
+	s12.in.player[0] = sys_combo(pad->buttons) ? 0 : map_player(0, pad, frame, &s) | analog_input(pad);
+	s12.in.player[1] = sys_combo(pad2->buttons) ? 0 : map_player(1, pad2, frame, &s);
 	if (rs12_dip_service) // test mode from the menu
 		s |= S12_SYS_DSW_SERVICE;
-	s12.in.player[0] = p | analog_input(pad);
 	s12.in.system = s;
 }
 
@@ -1201,10 +1212,14 @@ int main(int argc, char *argv[])
 	rs12_video_init();
 	if (rs12_audio_init() != 0)
 		RS12_LOG("audio: init failed");
-	sceCtrlSetSamplingMode(SCE_CTRL_MODE_ANALOG);
+	re_pad_init();
 	rs12_touch_init();
 	rs12_settings_load();
 	rs12_settings_apply_video();
+	// input engine (setting): RePad = the Bluetooth controller plugin from the app, unless it already runs (ur0:tai, or
+	// another Re app); Native = whatever the system has
+	g_set.input_engine = re_pad_engine_init(g_set.input_engine, "ux0:app/RSYS00012/module/repad.skprx"); // (the kernel cannot open app0:)
+	RS12_LOG("input engine: %s, RePad %s", re_pad_engine_name(g_set.input_engine), re_pad_plugin() ? "running" : "not running");
 
 next_game:
 	// game: one-shot autostart (measurement tools) or restart (menu Reset) skip the list; else the game list with the cursor on
@@ -1254,7 +1269,8 @@ next_game:
 		while (!s_quit) {
 			rs12_video_present();
 			SceCtrlData pad;
-			sceCtrlPeekBufferPositive(0, &pad, 1);
+			re_pad_poll();
+			re_pad_read_all(&pad);
 			if (pad.buttons & SCE_CTRL_START)
 				break;
 		}
@@ -1434,12 +1450,23 @@ next_game:
 	float osd_fps = 0;
 	uint32_t prev_buttons = ~0u;
 	while (!s_quit) {
-		SceCtrlData pad;
-		sceCtrlPeekBufferPositive(0, &pad, 1);
-		if (g_set.touch_keys) // touch buttons press their Vita keys (in gun games too: those touches do not aim)
-			pad.buttons |= rs12_touch_buttons();
+		// 1P and 2P controllers (re_pad); system combos (menu, quick save / load, quit) from any controller
+		SceCtrlData pad, pad2, all;
+		re_pad_poll();
+		re_pad_read(0, &pad);
+		re_pad_read(1, &pad2);
+		re_pad_read_all(&all);
+		if (g_set.touch_keys) { // touch buttons press their Vita keys (in gun games too: those touches do not aim)
+			const uint32_t tb = rs12_touch_buttons();
+			pad.buttons |= tb;
+			all.buttons |= tb;
+		}
+		if (re_pad_changed()) {
+			char t1[48], t2[48];
+			rs12_osd_show("1P: %s   2P: %s", re_pad_player_text(0, t1, sizeof(t1)), re_pad_player_text(1, t2, sizeof(t2)));
+		}
 		const uint32_t quit_keys = SCE_CTRL_START | SCE_CTRL_SELECT | SCE_CTRL_LTRIGGER | SCE_CTRL_RTRIGGER;
-		if ((pad.buttons & quit_keys) == quit_keys)
+		if ((all.buttons & quit_keys) == quit_keys)
 			break;
 		// test (ux0:data/resys12/menutest): menu pages, notice, FPS box to PPM files at frame 600
 		if (frames == 600 && file_exists(DATA_DIR "/menutest")) {
@@ -1580,14 +1607,15 @@ next_game:
 				RS12_LOG("bench: load %s %s", bp, state_load_file(bp) ? "ok" : "failed");
 			}
 		}
-		if (rs12_menu_should_open(pad.buttons)) {
+		if (rs12_menu_should_open(all.buttons)) {
 			// in-game menu (SELECT+START): emulation stops while it is open; drawn over the last frame
 			RS12_LOG("menu: open f%u", frames);
 			rs12_fps_hide(); // (it covered the menu, e.g. Done of the touch layout editor)
 			rs12_touch_overlay_update(1);
 			for (int done = 0; !done;) {
-				sceCtrlPeekBufferPositive(0, &pad, 1);
-				switch (rs12_menu_update(pad.buttons)) {
+				re_pad_poll();
+				re_pad_read_all(&all);
+				switch (rs12_menu_update(all.buttons)) {
 				case RS12_MENU_CLOSE: done = 1; break;
 				case RS12_MENU_RESET:
 					// the board is reset in place (CPU, RAM, hardware, System 12 board, H8, C352, GPU): the ROMs stay
@@ -1621,7 +1649,7 @@ next_game:
 			rs12_menu_hide();
 			rs12_video_present();
 			RS12_LOG("menu: close (quit %d)", quit_mode);
-			prev_buttons = pad.buttons;
+			prev_buttons = all.buttons;
 			win_t0 = rs12_time_us();
 			win_n = 0;
 			sum_emu = sum_present = 0;
@@ -1632,14 +1660,14 @@ next_game:
 		}
 		// quick save / load combos (SELECT+L save / SELECT+R load, current slot)
 		{
-			const uint32_t edge = pad.buttons & ~prev_buttons;
-			if ((pad.buttons & SCE_CTRL_SELECT) && (edge & SCE_CTRL_LTRIGGER))
+			const uint32_t edge = all.buttons & ~prev_buttons;
+			if ((all.buttons & SCE_CTRL_SELECT) && (edge & SCE_CTRL_LTRIGGER))
 				state_save(game, rs12_menu_slot());
-			else if ((pad.buttons & SCE_CTRL_SELECT) && (edge & SCE_CTRL_RTRIGGER))
+			else if ((all.buttons & SCE_CTRL_SELECT) && (edge & SCE_CTRL_RTRIGGER))
 				state_load(game, rs12_menu_slot());
-			prev_buttons = pad.buttons;
+			prev_buttons = all.buttons;
 		}
-		map_input(&pad, frames);
+		map_input(&pad, &pad2, frames);
 		// test input script (ux0:data/resys12/input.txt, "F:P1:SYS,..." hex masks as in the PC harness RS12_INPUT, each
 		// held from frame F on, added to the pad). Read once at startup and deleted (one-shot, like shot.txt)
 		{

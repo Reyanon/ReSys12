@@ -16,6 +16,8 @@ void ui_fini(void);
 // canvas: w×h at screen position x,y (overlay layer slot 0..3, higher number on top)
 UiCanvas *ui_canvas(int slot, int x, int y, int w, int h);
 void ui_canvas_move(UiCanvas *c, int x, int y);
+// the texture last committed (NULL before the first commit). Slot -1 canvases are shown only through it (strips)
+const struct RS12Tex *ui_tex(UiCanvas *c);
 // drawing limited to rows [y0, y1) (rect, line, circle, text; ui_clip_y(c, 0, h) = whole canvas)
 void ui_clip_y(UiCanvas *c, int y0, int y1);
 uint32_t *ui_pixels(UiCanvas *c);              // the canvas pixels (premultiplied, w x h)

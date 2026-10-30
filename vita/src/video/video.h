@@ -39,6 +39,11 @@ RS12Tex *rs12_video_tex(int w, int h);
 // Layer slot 0..3 (higher on top; slot 4 = the touch keys, under all of them): top-left w x h of texture t at screen (x, y)
 // 1:1, premultiplied alpha blend. t NULL removes it
 void rs12_video_layer(int slot, RS12Tex *t, int x, int y, int w, int h);
+// strips drawn right over slot 0 (the game list rows: drawn once each, moved by the GPU while the list scrolls; ReiREM's
+// way), cut to rows y0..y1 of the screen. n 0 removes them
+#define RS12_NSTRIP 24
+typedef struct { const RS12Tex *t; int x, y; } RS12Strip;
+void rs12_video_strips(const RS12Strip *s, int n, int y0, int y1);
 // layer slot opacity 0..1 (1 = as drawn)
 void rs12_video_layer_alpha(int slot, float a);
 // layer slot turned clockwise by rot * 90 degrees (drawn at x, y as an h x w rectangle when rot is odd)

@@ -7,8 +7,12 @@
 
 // keys an area can press: RS12_KEY_* (Cross .. Start), then the d-pad
 enum { RS12_TKEY_UP = 8, RS12_TKEY_DOWN, RS12_TKEY_LEFT, RS12_TKEY_RIGHT, RS12_TKEY_COUNT };
+// a touch button can also press two keys together (its own, apart from Controls > Combo keys):
+// key = RS12_TKEY_COMBO + bit mask (1 << RS12_KEY_*) of the two (as in ReST-V)
+#define RS12_TKEY_COMBO 256
+#define RS12_TKEY_IS_COMBO(k) ((k) >= RS12_TKEY_COMBO)
 
-typedef struct { int16_t x, y, w, h; int8_t key; } Rs12TouchArea; // screen pixels (960x544)
+typedef struct { int16_t x, y, w, h, key; } Rs12TouchArea; // screen pixels (960x544)
 
 void rs12_touch_init(void);                 // start sampling, read the layout (ux0:data/resys12/touch.cfg)
 int rs12_touch_count(void);
