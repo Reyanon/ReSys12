@@ -85,10 +85,21 @@ remains (listed in the notes). Full speed is 60 fps (59.94 Hz).
 **FPS**: emulated frames per second measured on a PS Vita at 444 MHz in a gameplay scene (30 seconds with the
 buttons pressed, latest measurement). Some games draw fewer new pictures than that on purpose (noted).
 
-The table was measured with the Vita's fourth CPU core open to apps (a plugin such as CoreUnlocker), which adds a third
-render thread. A stock Vita does not need the plugin: the app sees the core is closed and uses two render threads.
-Measured that way, Tekken Tag Tournament, Tekken 3, Soul Calibur and Toukon Retsuden 3 still run at 60 fps, and
-Ehrgeiz drops to about 57 fps. Other games were not measured without the plugin. The app sets 444 MHz by itself.
+**Fourth CPU core**: the table was measured with the Vita's fourth CPU core open to apps. A Vita normally leaves apps
+three cores, and the fourth stays closed unless a plugin opens it.
+
+- v0.1.282 and older need that core. Without a plugin they run slower: Tekken Tag Tournament fell to 41-55 fps in our
+  test, and overclocking does not help. The in-app update check does not run either, so install v0.1.286 or newer by
+  hand with the VPK.
+- v0.1.286 and newer need no plugin. The app checks the core at start and, when it is closed, uses two render threads
+  instead of three. Measured that way, Tekken Tag Tournament, Tekken 3, Soul Calibur and Toukon Retsuden 3 run at
+  60 fps, and Ehrgeiz at about 57 fps. Other games were not measured without a plugin.
+- A plugin is optional. [CapUnlocker](https://github.com/GrapheneCt/CapUnlocker) opens the core (install it under
+  `*KERNEL` in `ur0:tai/config.txt`) and the app then uses the third render thread, which brings Ehrgeiz to 60 fps.
+  We measured this with its older version, CoreUnlocker80000H, on firmware 3.72, and did not test CapUnlocker itself.
+  CapUnlocker also unlocks other system features.
+
+The app sets 444 MHz by itself, so PSVshell or another overclock plugin is not needed.
 
 | Game | Sets (parent first) | Year | Status | FPS | Notes |
 |---|---|---|---|---|---|
@@ -165,8 +176,9 @@ starts load the cache directly.
 
 ### ROM sets
 
-- ROMs must be **MAME 0.260** compatible sets (romsets from MAME 0.260 or newer also work; the few sets whose
-  files changed after 0.260 are recognized in both forms).
+- **Required MAME version: romsets from MAME 0.260 or newer.** 0.260 is the version we test with. The supported set
+  list comes from a current MAME source (September 2026), and the few sets whose files or names changed after 0.260
+  are recognized in both forms. Romsets older than 0.260 are not tested and may not load.
 - Keep each set as one zip named after the set, for example `tektagt.zip`. Do not rename or extract them.
   Files inside the zip are matched by CRC32, so their names do not matter.
 - Clone sets (for example `tektagtub`) read missing files from the parent zip (`tektagt.zip`), so keep the
