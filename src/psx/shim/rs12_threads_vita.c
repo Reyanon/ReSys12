@@ -29,6 +29,38 @@ void pcsxr_sthread_init(void)
 {
 }
 
+// CPU3 is closed to user threads on a stock system (sceKernelCreateThread refuses the mask); a plugin such as CoreUnlocker
+// opens it. Asked once: a thread must really run there before anything is planned around it
+static int cpu3_probe(SceSize args, void *argp)
+{
+	(void)args;
+	(void)argp;
+	return 0;
+}
+
+int rs12_cpu3_usable(void)
+{
+	static int s_ok = -1;
+	if (s_ok < 0) {
+		s_ok = 0;
+		const SceUID t = sceKernelCreateThread("rs12_cpu3", cpu3_probe, 0x60, 0x1000, 0, 0x80000, NULL);
+		if (t >= 0) {
+			SceUInt timeout = 200000;
+			if (sceKernelStartThread(t, 0, NULL) >= 0 && sceKernelWaitThreadEnd(t, NULL, &timeout) >= 0) {
+				s_ok = 1;
+				sceKernelDeleteThread(t);
+			}
+		}
+	}
+	return s_ok;
+}
+
+// a thread meant for CPU3: there when it can be, else on CPU1
+int rs12_cpu3_mask(void)
+{
+	return rs12_cpu3_usable() ? 0x80000 : SCE_KERNEL_CPU_MASK_USER_1;
+}
+
 static int thread_entry(SceSize args, void *argp)
 {
 	struct sthread *t = *(struct sthread **)argp;
@@ -250,7 +282,7 @@ int rs12_split_worker_start(int w, void (*job)(int), int cpu)
 		return 0;
 	SceUID t = sceKernelCreateThread(w ? "rs12_gpusplit2" : "rs12_gpusplit", split_worker_thread,
 		w ? SPLIT_HELPER2_PRIO : SPLIT_HELPER_PRIO, 0x20000, 0,
-		cpu == 3 ? 0x80000 : SCE_KERNEL_CPU_MASK_USER_1, NULL);
+		cpu == 3 ? rs12_cpu3_mask() : SCE_KERNEL_CPU_MASK_USER_1, NULL);
 	if (t < 0)
 		return 0;
 	s_sw_tid[w] = t;

@@ -532,7 +532,8 @@ void rs12_update_check_start(void)
 		}
 		fclose(tf);
 	}
-	const SceUID t = sceKernelCreateThread("rs12_update", check_thread, 0x10000100 + 30, 0x10000, 0, 0x80000, NULL);
+	extern int rs12_cpu3_mask(void);
+	const SceUID t = sceKernelCreateThread("rs12_update", check_thread, 0x10000100 + 30, 0x10000, 0, rs12_cpu3_mask(), NULL);
 	if (t >= 0)
 		sceKernelStartThread(t, 0, NULL);
 }

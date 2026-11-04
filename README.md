@@ -85,6 +85,11 @@ remains (listed in the notes). Full speed is 60 fps (59.94 Hz).
 **FPS**: emulated frames per second measured on a PS Vita at 444 MHz in a gameplay scene (30 seconds with the
 buttons pressed, latest measurement). Some games draw fewer new pictures than that on purpose (noted).
 
+The table was measured with the Vita's fourth CPU core open to apps (a plugin such as CoreUnlocker), which adds a third
+render thread. A stock Vita does not need the plugin: the app sees the core is closed and uses two render threads.
+Measured that way, Tekken Tag Tournament, Tekken 3, Soul Calibur and Toukon Retsuden 3 still run at 60 fps, and
+Ehrgeiz drops to about 57 fps. Other games were not measured without the plugin. The app sets 444 MHz by itself.
+
 | Game | Sets (parent first) | Year | Status | FPS | Notes |
 |---|---|---|---|---|---|
 | Tekken Tag Tournament | `tektagt`, `tektagtc1a`, `tektagtub`, `tektagtuc1`, `tektagtjc1` | 1999 | Playable | 59.94 | |

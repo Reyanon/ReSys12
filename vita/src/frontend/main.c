@@ -1320,7 +1320,10 @@ next_game:
 				rs12_drc_cpu_mask = 0;
 			fclose(cf);
 		}
-		RS12_LOG("dynarec thread cpu mask %x", rs12_drc_cpu_mask);
+		extern int rs12_cpu3_usable(void);
+		if (rs12_drc_cpu_mask == 0x80000 && !rs12_cpu3_usable())
+			rs12_drc_cpu_mask = SCE_KERNEL_CPU_MASK_USER_1; // (stock system: no CPU3 for user threads)
+		RS12_LOG("cpu3 %s, dynarec thread cpu mask %x", rs12_cpu3_usable() ? "open" : "closed", rs12_drc_cpu_mask);
 	}
 	{ // measurements: main CPU cycles between sub CPU slices from ux0:data/resys12/subq
 		FILE *qf = fopen(DATA_DIR "/subq", "r");
@@ -1382,12 +1385,13 @@ next_game:
 		int split = sceIoGetstat(DATA_DIR "/nogpusplit", &st) >= 0 ? 0 : 1;
 		if (split && sceIoGetstat(DATA_DIR "/gpusplitseq", &st) >= 0)
 			split = 2;
-		{ // three bands (helpers on CPU1 and CPU3) unless ux0:data/resys12/gpusplit2 exists
-			extern void rs12_gpu_split_set_count(int n);
-			rs12_gpu_split_set_count(file_exists(DATA_DIR "/gpusplit2") ? 2 : 3);
-		}
+		// three bands (helpers on CPU1 and CPU3) unless CPU3 is closed or ux0:data/resys12/gpusplit2 exists
+		extern void rs12_gpu_split_set_count(int n);
+		extern int rs12_cpu3_usable(void);
+		const int bands = file_exists(DATA_DIR "/gpusplit2") || !rs12_cpu3_usable() ? 2 : 3;
+		rs12_gpu_split_set_count(bands);
 		rs12_gpu_split_enable(split);
-		RS12_LOG("gpu split: %s", split == 1 ? (file_exists(DATA_DIR "/gpusplit2") ? "2 bands (helper on CPU1)" :
+		RS12_LOG("gpu split: %s", split == 1 ? (bands == 2 ? "2 bands (helper on CPU1)" :
 			"3 bands (helpers on CPU1, CPU3)") : split ? "on (sequential)" : "off");
 	}
 

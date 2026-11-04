@@ -594,9 +594,10 @@ static int cache_read_vita(S12Rom *r, const S12Game *g, const char *path, uint64
 				}
 	s12_rom_all_ready = s_cr.pieces == 0;
 	// readers on the cores the loading screen leaves free (CPU1 runs this thread, CPU3 is idle until the game)
+	extern int rs12_cpu3_mask(void);
 	for (int i = 0; i < s12_rom_cache_readers && s_cr_nth < 4; i++) {
 		const SceUID t = sceKernelCreateThread("rs12_cacheread", cache_reader, 0x60, 0x2000, 0,
-			i == 0 ? 0x80000 : SCE_KERNEL_CPU_MASK_USER_1, NULL);
+			i == 0 ? rs12_cpu3_mask() : SCE_KERNEL_CPU_MASK_USER_1, NULL);
 		if (t >= 0 && sceKernelStartThread(t, 0, NULL) >= 0)
 			s_cr_th[s_cr_nth++] = t;
 		else if (t >= 0)
