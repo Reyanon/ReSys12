@@ -69,8 +69,14 @@ screen are simplified when that buys speed.
 - Gun games: aim with an analog stick or the touch screen, adjustable sensitivity and crosshair. Driving games:
   wheel on a stick, gas and brake on the shoulder buttons.
 - Touch buttons: place any number of on-screen buttons, resize them by their edges and corners.
-- Display options: aspect ratio, filter, border color or user artwork, frame rate counter, display latency
-  (Normal, or Low: about one frame sooner, with an occasional repeated frame).
+- Touch in the game list and the menus: tap to select, tap again to start or confirm, drag and flick scrolling, footer
+  buttons, a settings button, a touch effect.
+- Game list search by ROM name or title (Triangle). The header shows the battery.
+- Key mapping: each analog stick set on its own, stick directions or a whole stick as keys, several keys for one action
+  (the + at the right of a key row, or Triangle).
+- Display options: aspect ratio, filter, border color or artwork (user artwork, or a moving neon background for games
+  without it), frame rate counter, display latency (Normal, or Low: about one frame sooner, with an occasional repeated
+  frame).
 - Per-game settings: save the current display and control settings, touch button layout included, for one game only.
 - Updates: the app checks GitHub for a new version when it starts and can install it.
 
@@ -86,18 +92,21 @@ remains (listed in the notes). Full speed is 60 fps (59.94 Hz).
 buttons pressed, latest measurement). Some games draw fewer new pictures than that on purpose (noted).
 
 **Fourth CPU core**: the table was measured with the Vita's fourth CPU core open to apps. A Vita normally leaves apps
-three cores, and the fourth stays closed unless a plugin opens it.
+three cores, and the fourth stays closed unless something opens it. No plugin is needed for this any more.
 
-- v0.1.282 and older need that core. Without a plugin they run slower: Tekken Tag Tournament fell to 41-55 fps in our
-  test, and overclocking does not help. The in-app update check does not run either, so install v0.1.286 or newer by
-  hand with the VPK.
-- v0.1.286 and newer need no plugin. The app checks the core at start and, when it is closed, uses two render threads
-  instead of three. Measured that way, Tekken Tag Tournament, Tekken 3, Soul Calibur and Toukon Retsuden 3 run at
-  60 fps, and Ehrgeiz at about 57 fps. Other games were not measured without a plugin.
-- A plugin is optional. [CapUnlocker](https://github.com/GrapheneCt/CapUnlocker) opens the core (install it under
-  `*KERNEL` in `ur0:tai/config.txt`) and the app then uses the third render thread, which brings Ehrgeiz to 60 fps.
-  We measured this with its older version, CoreUnlocker80000H, on firmware 3.72, and did not test CapUnlocker itself.
-  CapUnlocker also unlocks other system features.
+- v0.1.330 and newer open the core themselves. When it is closed, the app's kernel module hooks the system's CPU mask
+  check for the app's threads, the same way the CoreUnlocker80000H and
+  [CapUnlocker](https://github.com/GrapheneCt/CapUnlocker) plugins (GrapheneCt) do. It hooks only when the code at
+  that place matches the known code (verified on firmware 3.65), and releases the hook when the app exits. Measured
+  on firmware 3.65 without plugins: Tekken Tag Tournament 59.91, Tekken 3 59.94, Ehrgeiz 59.80, Soul Calibur 59.81
+  and Toukon Retsuden 3 59.83 fps.
+- Other firmwares were not tested. If the code there differs, the app does not hook it and runs on three cores with
+  two render threads instead of three, as v0.1.286 does. Measured that way, Tekken Tag Tournament, Tekken 3, Soul
+  Calibur and Toukon Retsuden 3 run at 60 fps, and Ehrgeiz at about 57 fps.
+- If a plugin has already opened the core, the app leaves it as it is.
+- To turn the hook off, create the file `ux0:data/resys12/nocpu3`. The app then runs on three cores.
+- v0.1.282 and older need the fourth core. Without a plugin they run slower (Tekken Tag Tournament fell to 41-55 fps
+  in our test), and their in-app update check does not run either, so install a newer version by hand with the VPK.
 
 The app sets 444 MHz by itself, so PSVshell or another overclock plugin is not needed.
 
@@ -120,13 +129,13 @@ The app sets 444 MHz by itself, so PSVshell or another overclock plugin is not n
 | Paca Paca Passion Special | `pacappsp` | 1999 | Partial | 59.94 | as above |
 | Derby Quiz My Dream Horse | `mdhorse` | 1998 | Playable | 59.94 | the game draws about 40 pictures a second |
 | Kaiun Quiz | `kaiunqz` | 1999 | Playable | 59.94 | the game draws about 35 pictures a second |
-| Point Blank 2 / Gunbarl | `ptblank2`, `gunbarl` | 1999 | Partial | 59.94 | gun on an analog stick or touch; may stop during play |
+| Point Blank 2 / Gunbarl | `ptblank2`, `gunbarl` | 1999 | Partial | 59.94 | gun on an analog stick or touch; the black screen after the title is fixed; may still stop during play |
 | Ghoul Panic / Oh! Bakyuuun | `ghlpanic`, `ohbakyuun` | 1999 | Playable | 59.94 | gun on an analog stick or touch |
 | Golgo 13 | `golgo13` | 1999 | Partial | 59.94 | the board tests its ROMs for a while after power-on |
 | Golgo 13 Kiseki no Dandou | `g13knd` | 2000 | Partial | 59.94 | as above |
 | Techno Drive | `technodr` | 1998 | Playable | 59.94 | wheel on an analog stick |
 | Attack Pla Rail | `aplarail` | 1998 | Playable | 59.94 | lever on an analog stick; the game draws 40 pictures a second |
-| Kart Duel | `kartduel`, `kartduelja` | 2000 | Partial | | no link play |
+| Kart Duel | `kartduel`, `kartduelja` | 2000 | Partial | | wheel on an analog stick; no link play; the test menu cannot be opened |
 | Tekken Tag Tournament (Japan) | `tektagtja3`, `tektagtjb` | 1999 | Not working | | bad dumps, also not working in MAME |
 | Super World Stadium 2000 / 2001 | `sws2000`, `sws2001` | 2000 | Not working | | also not working in MAME |
 | Um Jammer Lammy NOW!, Quest for Fame, Truck Kyosokyoku | `ujlnow`, `questff`, `truckk` | 1999 | Not working | | CD-XA board, not emulated |
@@ -190,7 +199,7 @@ starts load the cache directly.
 
 | What | Path |
 |---|---|
-| Border artwork | `ux0:data/resys12/artwork/<set>.png` (the parent set name is tried next) |
+| Border artwork | `ux0:data/resys12/artwork/<set>.png` (the parent set name is tried next; without it, Border = Artwork shows a moving neon background) |
 
 Files written by the emulator:
 
@@ -213,9 +222,13 @@ Files written by the emulator:
 | Change tab (Buttons / Gun / Wheel-Lever) | L / R |
 | Page up / down | Left / Right |
 | Add / remove favorite | Square |
-| Filter: Playable / All / Favorites | SELECT |
-| Options (Display, Controls) | START |
-| About | Triangle |
+| Filter: Playable / All / Favorites | SELECT (the footer shows the current filter) |
+| Options (Display, Controls) | START, or the settings button |
+| Search | Triangle (again: the whole list) |
+| About | in the Options, or the About button in the footer |
+
+The game list and the menus also work by touch: tap a row to select it and tap it again to start the game or confirm,
+drag or flick to scroll, and tap the footer buttons.
 
 Options opened from the game list edit the global settings.
 
@@ -223,7 +236,7 @@ Options opened from the game list edit the global settings.
 
 | Action | Buttons |
 |---|---|
-| Lever | D-pad (or left stick, see Controls) |
+| Lever | D-pad and left stick (each stick can be set on its own, see Controls) |
 | Buttons 1-4 | Square, Triangle, Cross, Circle (Tekken: left punch, right punch, left kick, right kick) |
 | Buttons 5-6 | R, L (Tekken Tag Tournament: R = tag) |
 | Coin / Start | SELECT / START |
@@ -250,6 +263,13 @@ read, so a button on another controller does not end up in the Vita's setup. Squ
 allowed. Controllers have L2, R2, L3 and R3 as keys of their own (L1 and R1 are L and R); in the menus L2 and R2 also
 work as L and R.
 
+An action can have several keys: touch the + at the right of a key row, or press Triangle on it, and press the extra
+key. Triangle on an extra key row (or its x) removes it. Stick directions (for example R-Stick Left) and a whole stick
+(L-Stick, R-Stick: any direction) can be used as keys for any action.
+
+**Analog sticks.** The *Analog sticks* page sets the left and right stick on their own: each direction gives a lever
+direction, a button, coin, start or nothing. By default the left stick moves the lever and the right stick does nothing.
+
 **Input engine** (Controls > Input engine):
 
 | Engine | When to use it |
@@ -271,7 +291,8 @@ uses L as the scope sensor. With *Touch gun* on, touching the screen aims and fi
 **Touch buttons.** Controls > Touch controls > Edit touch layout: drag on an empty spot to add a button, drag it to
 move it, and drag an edge or corner to resize it (6-pixel steps). Tap a button to pick its key, a *Combo* (two keys
 at once), *Duplicate* (a copy of the same size and key, whose key is picked next) or *Delete*. Done or START leaves
-the editor.
+the editor. Touch buttons press keys for the player who uses the Vita itself (for example 2P when 1P plays on a
+controller and 2P on the Vita).
 
 **Driving games.** The wheel or lever follows an analog stick (the d-pad also works), R is gas and L is brake.
 
@@ -339,6 +360,8 @@ The original copyright headers are kept in all imported sources.
   hardware research.
 - [VitaSDK](https://vitasdk.org/), [vitaGL](https://github.com/Rinnegatamante/vitaGL) and
   [vitaShaRK](https://github.com/Rinnegatamante/vitaShaRK) (Rinnegatamante).
+- [CapUnlocker](https://github.com/GrapheneCt/CapUnlocker) and CoreUnlocker80000H (GrapheneCt, MIT): the place and
+  method of the fourth CPU core hook.
 - [JUnzip](https://github.com/jokkebk/JUnzip), [zlib](https://zlib.net/), [libpng](https://github.com/pnggroup/libpng).
 
 **Trademarks.** Namco, System 12 and all game titles are trademarks of their respective owners. This project is not

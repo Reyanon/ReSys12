@@ -292,6 +292,7 @@ extern uint32_t rs12_ndrc_hot[256][3];         // new_dynarec.c: compiles per bl
 #define NVRAM_DIR DATA_DIR "/nvram"
 static char s_eep_path[96];
 static uint8_t s_eep_buf[sizeof(s12.eeprom)];
+static int s_eep_off; // a measurement scene runs: the game's writes stay in memory (tools do not change the user's state)
 static volatile int s_eep_pending, s_eep_writing;
 
 static void eep_load(const char *game)
@@ -304,6 +305,7 @@ static void eep_load(const char *game)
 	uint8_t buf[sizeof(s12.eeprom)];
 	if (sceIoRead(fd, buf, sizeof(buf)) == (int)sizeof(buf)) {
 		memcpy(s12.eeprom, buf, sizeof(buf));
+		memcpy(s_eep_buf, buf, sizeof(buf)); // (what the first write is compared with)
 		RS12_LOG("eeprom: loaded %s", s_eep_path);
 	}
 	sceIoClose(fd);
@@ -457,8 +459,14 @@ static void gpu_rec_frame(uint32_t frames)
 // end of each frame (emulation thread): hand a changed EEPROM to the watch thread unless a write is still waiting
 static void eep_frame(void)
 {
+	if (s_eep_off)
+		s12.eeprom_dirty = 0;
 	if (!s12.eeprom_dirty || __atomic_load_n(&s_eep_pending, __ATOMIC_ACQUIRE))
 		return;
+	int changed = 0;
+	for (unsigned i = 0; i < sizeof(s_eep_buf); i++)
+		changed += s_eep_buf[i] != s12.eeprom[i];
+	RS12_LOG("eeprom: %d bytes changed", changed);
 	memcpy(s_eep_buf, s12.eeprom, sizeof(s_eep_buf));
 	s12.eeprom_dirty = 0;
 	__atomic_store_n(&s_eep_pending, 1, __ATOMIC_RELEASE);
@@ -689,9 +697,10 @@ static int watch_thread(SceSize args, void *argp)
 	while (!s_app_quit) {
 		if (__atomic_load_n(&s_eep_pending, __ATOMIC_ACQUIRE)) {
 			s_eep_writing = 1;
-			if (!s_quit)
+			if (!s_quit) { // (quitting: the emulation thread writes it, the waiting mark tells it to)
 				eep_write(s_eep_buf);
-			__atomic_store_n(&s_eep_pending, 0, __ATOMIC_RELEASE);
+				__atomic_store_n(&s_eep_pending, 0, __ATOMIC_RELEASE);
+			}
 			s_eep_writing = 0;
 		}
 		if (__atomic_load_n(&s_warm_pending, __ATOMIC_ACQUIRE)) {
@@ -895,11 +904,28 @@ static int analog_stick(void)
 	}
 }
 
+// the gun's aim (fraction of the picture as shown, where the crosshair is drawn) to the game: the gun ranges are
+// MAME's and cover its whole raster, where the picture sits (x1 - 0x260) columns in; the shown picture drops that offset
+extern float rs12_gpu_gun_x(float a, int *start, int *hres, int *w); // gpulib gpu.c
+static void set_gun(float gx, float gy)
+{
+	int start, hres, w;
+	const float fx = rs12_gpu_gun_x(gx, &start, &hres, &w);
+	static int log_s = -9999, log_h, log_w;
+	if (start != log_s || hres != log_h || w != log_w) {
+		log_s = start;
+		log_h = hres;
+		log_w = w;
+		RS12_LOG("gun raster: picture %d columns from %d of %d", w, start, hres);
+	}
+	s12_set_gun(0, fx, gy);
+}
+
 static uint32_t analog_input(const SceCtrlData *pad)
 {
 	const int kind = s12_analog_kind(s12.game);
 	const int st = analog_stick();
-	const uint32_t b = pad->buttons;
+	const uint32_t b = (pad->buttons & ~RS12_STICK_BITS) | rs12_stick_bits(pad->lx, pad->ly, pad->rx, pad->ry);
 	uint32_t p = 0;
 	// sticks rest off centre (this Vita: left 111,119): the first half second of a game gives each stick's centre (if
 	// it is near 128)
@@ -939,7 +965,7 @@ static uint32_t analog_input(const SceCtrlData *pad)
 				gy = fy < 0.0f ? 0.0f : fy > 1.0f ? 1.0f : fy;
 				p |= golgo ? S12_IN_B2 : S12_IN_B1;
 			}
-			s12_set_gun(0, gx, gy);
+			set_gun(gx, gy);
 			rs12_video_crosshair(0, g_set.crosshair, gx, gy);
 			if (b & rs12_key_code(g_set.gun_fire)) // (the trigger key works too)
 				p |= golgo ? S12_IN_B2 : S12_IN_B1;
@@ -972,7 +998,7 @@ static uint32_t analog_input(const SceCtrlData *pad)
 		}
 		gx = gx < 0.0f ? 0.0f : gx > 1.0f ? 1.0f : gx;
 		gy = gy < 0.0f ? 0.0f : gy > 1.0f ? 1.0f : gy;
-		s12_set_gun(0, gx, gy);
+		set_gun(gx, gy);
 		rs12_video_crosshair(0, g_set.crosshair, gx, gy);
 		if (b & rs12_key_code(g_set.gun_fire))
 			p |= golgo ? S12_IN_B2 : S12_IN_B1; // trigger
@@ -1016,30 +1042,44 @@ static int sys_combo(uint32_t b)
 }
 static uint32_t map_player(int pl, const SceCtrlData *pad, unsigned frame, uint32_t *sys)
 {
-	const uint32_t b = pad->buttons;
+	// the sticks' directions count as keys (the aim stick's not: analog_input)
+	uint32_t sb = rs12_stick_bits(pad->lx, pad->ly, pad->rx, pad->ry);
+	if (!pl && analog_stick() == RS12_AIM_LEFT)
+		sb &= ~RS12_STICK_BITS_L;
+	if (!pl && analog_stick() == RS12_AIM_RIGHT)
+		sb &= ~RS12_STICK_BITS_R;
+	const uint32_t b = (pad->buttons & ~RS12_STICK_BITS) | sb;
 	// this player's buttons, stick, turbo and combo keys: those of the device it reads (they go with the device)
 	const rs12_port *pr = &g_set.port[re_pad_player_profile(pl)];
 	const int *km = pr->keymap;
 	uint32_t p = 0, s = 0;
+	static const uint32_t s12_btn[RS12_GAME_BUTTONS] = { S12_IN_B1, S12_IN_B2, S12_IN_B3, S12_IN_B4, S12_IN_B5, S12_IN_B6 };
 	if (b & SCE_CTRL_UP) p |= S12_IN_UP;
 	if (b & SCE_CTRL_DOWN) p |= S12_IN_DOWN;
 	if (b & SCE_CTRL_LEFT) p |= S12_IN_LEFT;
 	if (b & SCE_CTRL_RIGHT) p |= S12_IN_RIGHT;
-	// analog stick: tilting more than 48 from center 128 gives that direction (diagonals included)
-	// gun / wheel / lever games: the aim stick is not a lever (analog_input below)
-	const int aim_left = !pl && analog_stick() == RS12_AIM_LEFT;
-	const int aim_right = !pl && analog_stick() == RS12_AIM_RIGHT;
-	if ((pr->stick == RS12_STICK_LEFT || pr->stick == RS12_STICK_BOTH) && !aim_left) {
-		if (pad->ly < 80) p |= S12_IN_UP;
-		if (pad->ly > 176) p |= S12_IN_DOWN;
-		if (pad->lx < 80) p |= S12_IN_LEFT;
-		if (pad->lx > 176) p |= S12_IN_RIGHT;
-	}
-	if ((pr->stick == RS12_STICK_RIGHT || pr->stick == RS12_STICK_BOTH) && !aim_right) {
-		if (pad->ry < 80) p |= S12_IN_UP;
-		if (pad->ry > 176) p |= S12_IN_DOWN;
-		if (pad->rx < 80) p |= S12_IN_LEFT;
-		if (pad->rx > 176) p |= S12_IN_RIGHT;
+	// analog sticks, each on its own: tilting more than 48 from center 128 gives that direction (diagonals included) and
+	// each direction presses what the port says. Gun / wheel / lever games: the aim stick presses nothing (analog_input below)
+	uint32_t keyed = rs12_key_code(pr->turbo_key); // (a direction set as a key is that key, not what the stick page says)
+	for (int a = 0; a < RS12_ACT_COUNT; a++)
+		keyed |= rs12_act_bits(pr, a);
+	for (int st = 0; st < 2; st++) {
+		if (!pl && analog_stick() == (st ? RS12_AIM_RIGHT : RS12_AIM_LEFT))
+			continue;
+		static const uint32_t s12_dir[RS12_SDIR_COUNT] = { S12_IN_UP, S12_IN_DOWN, S12_IN_LEFT, S12_IN_RIGHT };
+		const int x = st ? pad->rx : pad->lx, y = st ? pad->ry : pad->ly;
+		const int on[RS12_SDIR_COUNT] = { y < 80, y > 176, x < 80, x > 176 };
+		for (int d = 0; d < RS12_SDIR_COUNT; d++) {
+			const int t = on[d] && !(keyed & rs12_key_code(RS12_KEY_LUP + st * RS12_SDIR_COUNT + d)) ? pr->smap[st][d] : RS12_STGT_NONE;
+			if (t >= RS12_STGT_UP && t <= RS12_STGT_RIGHT)
+				p |= s12_dir[t - RS12_STGT_UP];
+			else if (t >= RS12_STGT_B1 && t < RS12_STGT_B1 + rs12_menu_buttons())
+				p |= s12_btn[t - RS12_STGT_B1];
+			else if (t == RS12_STGT_COIN)
+				s |= pl ? S12_SYS_COIN2 : S12_SYS_COIN1;
+			else if (t == RS12_STGT_START)
+				p |= S12_IN_START;
+		}
 	}
 	if (rs12_input_rot && re_pad_port(pl) == 0 && !re_pad_is_tv()) {
 		// the Vita is held turned (its own controls only, not a controller) (Rotate Vertical L / R): turn the screen directions back into the game's
@@ -1051,7 +1091,6 @@ static uint32_t map_player(int pl, const SceCtrlData *pad, unsigned frame, uint3
 		else
 			p |= (l ? S12_IN_UP : 0) | (r ? S12_IN_DOWN : 0) | (d ? S12_IN_LEFT : 0) | (u ? S12_IN_RIGHT : 0);
 	}
-	static const uint32_t s12_btn[RS12_GAME_BUTTONS] = { S12_IN_B1, S12_IN_B2, S12_IN_B3, S12_IN_B4, S12_IN_B5, S12_IN_B6 };
 	// turbo: while the turbo key (None = off) is held, the turbo button is pressed for the first half of each period. The turbo key's
 	// normal mapping is not used
 	const uint32_t tm = rs12_key_code(pr->turbo_key);
@@ -1071,11 +1110,11 @@ static uint32_t map_player(int pl, const SceCtrlData *pad, unsigned frame, uint3
 			p |= s12_btn[pr->turbo_btn - 1];
 	}
 	for (int k = 0; k < rs12_menu_buttons(); k++)
-		if (nb & rs12_key_code(km[RS12_ACT_B1 + k]))
+		if (nb & rs12_act_bits(pr, RS12_ACT_B1 + k))
 			p |= s12_btn[k];
-	if (nb & rs12_key_code(km[RS12_ACT_COIN]))
+	if (nb & rs12_act_bits(pr, RS12_ACT_COIN))
 		s |= pl ? S12_SYS_COIN2 : S12_SYS_COIN1;
-	if (nb & rs12_key_code(km[RS12_ACT_START]))
+	if (nb & rs12_act_bits(pr, RS12_ACT_START))
 		p |= S12_IN_START;
 	*sys |= s;
 	return p;
@@ -1192,6 +1231,22 @@ int main(int argc, char *argv[])
 			back |= argv[i] && !strcmp(argv[i], "list");
 		}
 		rs12_kctrl_init(restarted);
+		{ // CPU3: opened by the kernel helper where its code is known, unless a plugin or an earlier run already has, or the file
+			// ux0:data/resys12/nocpu3 turns that off (the way out if the hook misbehaves)
+			extern int rs12_cpu3_usable(void);
+			extern void rs12_cpu3_recheck(void);
+			SceIoStat nst;
+			const int open = rs12_cpu3_usable(), off = sceIoGetstat(DATA_DIR "/nocpu3", &nst) >= 0;
+			if (!off)
+				rs12_kctrl_cpu3(!open);
+			else
+				RS12_LOG("cpu3: unlock off (nocpu3)");
+			if (!open && !off) {
+				rs12_cpu3_recheck();
+				if (!rs12_cpu3_usable())
+					rs12_kctrl_cpu3_release(); // (hooked and still closed: nothing left in the system)
+			}
+		}
 		// GitHub releases, on its own thread (the game list offers a newer one): only when the app is started, not
 		// when it comes back to the list from a game
 		if (!back)
@@ -1461,8 +1516,11 @@ next_game:
 		re_pad_read(1, &pad2);
 		re_pad_read_all(&all);
 		if (g_set.touch_keys) { // touch buttons press their Vita keys (in gun games too: those touches do not aim)
+			// they are the Vita's: they go to the player who reads the Vita's own controls, through that player's keys
+			// (1P when none does: both on controllers). The touch gun stays 1P's
 			const uint32_t tb = rs12_touch_buttons();
-			pad.buttons |= tb;
+			const int tp = re_pad_port(0) != 0 && re_pad_port(1) == 0 && !re_pad_is_tv();
+			(tp ? &pad2 : &pad)->buttons |= tb;
 			all.buttons |= tb;
 		}
 		if (re_pad_changed()) {
@@ -1603,6 +1661,7 @@ next_game:
 					fclose(bf);
 				}
 				sceIoRemove(DATA_DIR "/benchload");
+				s_eep_off = 1;
 				char bp[128];
 				if (slot >= 0)
 					snprintf(bp, sizeof(bp), STATE_DIR "/%s_%d.st", game, slot);
@@ -2101,8 +2160,9 @@ out:
 	// EEPROM changes not written yet (the watch thread skips them at s_quit; wait if it is in the middle of a write)
 	while (s_eep_writing)
 		sceKernelDelayThread(1000);
-	if (s12.eeprom_dirty || s_eep_pending)
+	if (!s_eep_off && (s12.eeprom_dirty || s_eep_pending))
 		eep_write(s12.eeprom);
+	s_eep_off = 0;
 	// a save state still being written (the watch thread finishes one it has started; one it never took is done here)
 	for (int i = 0; i < 200 && s_st_req; i++)
 		sceKernelDelayThread(10000);

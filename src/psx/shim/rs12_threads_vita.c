@@ -29,8 +29,8 @@ void pcsxr_sthread_init(void)
 {
 }
 
-// CPU3 is closed to user threads on a stock system (sceKernelCreateThread refuses the mask); a plugin such as CoreUnlocker
-// opens it. Asked once: a thread must really run there before anything is planned around it
+// CPU3 is closed to user threads on a stock system (sceKernelCreateThread refuses the mask, 0x80028025); the kernel helper
+// (known code) or a plugin such as CapUnlocker opens it. Asked once: a thread must really run there before anything is planned around it
 static int cpu3_probe(SceSize args, void *argp)
 {
 	(void)args;
@@ -38,9 +38,12 @@ static int cpu3_probe(SceSize args, void *argp)
 	return 0;
 }
 
+static int s_cpu3_ok = -1;
+void rs12_cpu3_recheck(void) { s_cpu3_ok = -1; } // (the kernel helper has just opened it)
+
 int rs12_cpu3_usable(void)
 {
-	static int s_ok = -1;
+	int s_ok = s_cpu3_ok;
 	if (s_ok < 0) {
 		s_ok = 0;
 		const SceUID t = sceKernelCreateThread("rs12_cpu3", cpu3_probe, 0x60, 0x1000, 0, 0x80000, NULL);
@@ -51,6 +54,7 @@ int rs12_cpu3_usable(void)
 				sceKernelDeleteThread(t);
 			}
 		}
+		s_cpu3_ok = s_ok;
 	}
 	return s_ok;
 }

@@ -1352,6 +1352,29 @@ void GPUgetScreenInfo(int *y, int *base_hres)
     *base_hres >>= 1;
 }
 
+// ReSys12: a gun aim given as a fraction of the picture as shown (the screen.w columns the flip copies, its left
+// offset dropped) -> a fraction of MAME's raster, which the gun input ranges cover. MAME (psx.cpp update_screen)
+// shows an hres-wide raster with VRAM column c at ((x1 - 0x260) * hres / 2560) + c; gpulib's screen.x is centred
+// (slightly off pictures) and the frontend does not use it. *start / *hres / *w: the shown picture in raster columns
+float rs12_gpu_gun_x(float a, int *start, int *hres_out, int *w_out)
+{
+  static const short hres_all[8] = { 256, 368, 320, 368, 512, 368, 640, 368 };
+  const int hres = hres_all[(gpu.status >> 16) & 7];
+  const int pal = gpu.status & PSX_GPU_STATUS_PAL;
+  const int left = ((int)gpu.screen.x1 - (pal ? 0x27e : 0x260)) * hres / 2560;
+  int w = gpu.screen.w, c0 = 0;
+  if (gpu.screen.x < 0) { // (the flip leaves out the columns left of the screen)
+    c0 = -gpu.screen.x;
+    w -= c0;
+  }
+  *start = left + c0;
+  *hres_out = hres;
+  *w_out = w;
+  if (w <= 0 || gpu.screen.x2 <= gpu.screen.x1)
+    return a;
+  return ((float)(left + c0) + a * (float)w) / (float)hres;
+}
+
 void GPUrearmedCallbacks(const struct rearmed_cbs *cbs)
 {
   gpu.frameskip.set = cbs->frameskip;

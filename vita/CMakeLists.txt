@@ -82,12 +82,14 @@ add_executable(${PROJECT_NAME}
   src/frontend/main.c
   src/frontend/audio.c
   src/frontend/resample.c
+  src/frontend/ime.c
   src/frontend/ui.c
   src/frontend/menu.c
   src/frontend/update.c
   src/frontend/touch.c
   src/common/re_pad.c
   src/video/video_gl.c
+  src/video/neon.c
   src/platform/clock.c
   src/platform/jit.c
   src/platform/log.c
@@ -121,7 +123,8 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE RS12_TEXT_PAD=${RS12_TEXT_PAD
 add_executable(rs12_kctrl kmod/rs12_kctrl.c)
 set_target_properties(rs12_kctrl PROPERTIES LINK_FLAGS "-nostdlib")
 target_compile_options(rs12_kctrl PRIVATE -fno-builtin)
-target_link_libraries(rs12_kctrl SceCtrlForDriver_stub SceThreadmgrForDriver_stub SceIofilemgrForDriver_stub SceSysmemForDriver_stub)
+target_link_libraries(rs12_kctrl SceCtrlForDriver_stub SceThreadmgrForDriver_stub SceIofilemgrForDriver_stub SceSysmemForDriver_stub
+  taihenForKernel_stub taihenModuleUtils_stub)
 # (vita_create_self splits its flags on spaces, so the export config path cannot be passed through it)
 add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/rs12_kctrl.skprx"
   COMMAND vita-elf-create -e "${CMAKE_SOURCE_DIR}/kmod/exports.yml" $<TARGET_FILE:rs12_kctrl> "${CMAKE_BINARY_DIR}/rs12_kctrl.velf"
@@ -130,7 +133,7 @@ add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/rs12_kctrl.skprx"
   VERBATIM)
 add_custom_target(kctrl_skprx ALL DEPENDS "${CMAKE_BINARY_DIR}/rs12_kctrl.skprx")
 set(RS12_KSTUB_DIR "${CMAKE_BINARY_DIR}/kctrl_stubs")
-set(RS12_KSTUB "${RS12_KSTUB_DIR}/librs12_kctrl_v4_stub_weak.a")
+set(RS12_KSTUB "${RS12_KSTUB_DIR}/librs12_kctrl_v5_stub_weak.a")
 add_custom_command(OUTPUT "${CMAKE_BINARY_DIR}/kctrl.yml"
   COMMAND vita-elf-export kernel $<TARGET_FILE:rs12_kctrl> "${CMAKE_SOURCE_DIR}/kmod/exports.yml" "${CMAKE_BINARY_DIR}/kctrl.yml"
   DEPENDS rs12_kctrl "${CMAKE_SOURCE_DIR}/kmod/exports.yml"
@@ -223,14 +226,13 @@ set(RS12_SCE_SYS_FILES
   sce_sys/livearea/contents/startup.png
   sce_sys/livearea/contents/template.xml
 )
-# module/rs12_kctrl.skprx: the kernel helper; module/repad.skprx: Bluetooth controllers; assets/blankArtwork.png: the
-# border artwork of games without their own; cacert.pem: certificates for the update check (HTTPS)
+# module/rs12_kctrl.skprx: the kernel helper; module/repad.skprx: Bluetooth controllers; cacert.pem: certificates for the
+# update check (HTTPS)
 set(RS12_VPK_ADD_ARGS -a "${CMAKE_BINARY_DIR}/rs12_kctrl.skprx=module/rs12_kctrl.skprx"
   -a "${CMAKE_BINARY_DIR}/repad.skprx=module/repad.skprx"
-  -a "${CMAKE_SOURCE_DIR}/sce_sys_src/blankArtwork.png=assets/blankArtwork.png"
   -a "${CMAKE_SOURCE_DIR}/res/cacert.pem=cacert.pem")
 set(RS12_VPK_DEPS "${CMAKE_BINARY_DIR}/rs12_kctrl.skprx" "${CMAKE_BINARY_DIR}/repad.skprx"
-  "${CMAKE_SOURCE_DIR}/sce_sys_src/blankArtwork.png" "${CMAKE_SOURCE_DIR}/res/cacert.pem")
+  "${CMAKE_SOURCE_DIR}/res/cacert.pem")
 foreach(f ${RS12_SCE_SYS_FILES})
   list(APPEND RS12_VPK_ADD_ARGS -a "${CMAKE_SOURCE_DIR}/${f}=${f}")
   list(APPEND RS12_VPK_DEPS "${CMAKE_SOURCE_DIR}/${f}")

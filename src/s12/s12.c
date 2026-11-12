@@ -15,6 +15,7 @@
 
 S12Board s12;
 static uint16_t s_link_ram[0x8000], s_link_regs[16]; // kartduel link board (kartduel_ram)
+static int s_eep_last = -1; // EEPROM byte the game wrote last (kartduel_calibrate)
 
 #define BANK_SIZE 0x200000u
 
@@ -52,6 +53,7 @@ void s12_attach(S12Rom *rom)
 	memset(&s12, 0, sizeof(s12));
 	memset(s_link_ram, 0, sizeof(s_link_ram));
 	memset(s_link_regs, 0, sizeof(s_link_regs));
+	s_eep_last = -1;
 	s12.rom = rom;
 	s12.game = rom->game;
 	const int st = rom->game->state;
@@ -162,7 +164,9 @@ void s12_mem_reset(void)
 		psxMemMapRead(0x1ff00000u, 0x80000u, NULL);
 }
 
-// ---- save state (board registers, shared RAM, EEPROM, protection); ROM pointers stay, bank mapping is rebuilt ----
+// ---- save state (board registers, shared RAM, EEPROM, protection); ROM pointers stay, bank mapping is rebuilt. The EEPROM
+// goes with the state: the game's RAM holds its own copy and checks, so the two must match. A load alone writes no file
+// (the game's next write does); measurement scenes write none at all (s_eep_off in main.c) ----
 uint32_t s12_board_state_size(void)
 {
 	return (uint32_t)sizeof(s12);
@@ -179,6 +183,7 @@ void s12_board_state_load(const void *src)
 	const S12Game *game = s12.game;
 	const S12Input in = s12.in; // inputs belong to the frontend
 	memcpy(&s12, src, sizeof(s12));
+	s12.eeprom_dirty = 0;
 	s12.rom = rom;
 	s12.game = game;
 	s12.in = in;
@@ -270,6 +275,29 @@ static uint16_t *kartduel_ram(uint32_t a)
 	return NULL;
 }
 
+// ---- kartduel controls calibration ("I/F INITIALIZE": hold service, turn on test, push service). The game keeps the
+// wheel centre, gas and brake at rest (ADC words, bits 15-6) big-endian at EEPROM 0x15b, 0x15d, 0x15f and their sum
+// inverted at 0x161. An EEPROM the game set up itself holds 0/0/0 (sum 0xffff): with centre 0 the wheel at rest reads
+// full right. A cabinet leaves the factory calibrated; this MAME set has no EEPROM dump, and the Vita has no service
+// button. So a block with centre 0 (a wheel turned fully left, never a real calibration) gets the centre and pedals
+// at rest of s12_set_wheel. Done when the game reads the centre, except right after it wrote it (it polls a written
+// byte until it reads back) ----
+#define KD_CAL 0x15b
+static void kartduel_calibrate(void)
+{
+	static const uint8_t uncal[8] = { 0, 0, 0, 0, 0, 0, 0xff, 0xff };
+	uint8_t *c = &s12.eeprom[KD_CAL];
+	if (s_eep_last == KD_CAL || memcmp(c, uncal, sizeof(uncal)))
+		return;
+	const uint16_t centre = (uint16_t)(0x200 << 6), gas = 0, brake = 0, sum = (uint16_t)~(centre + gas + brake);
+	const uint16_t v[4] = { centre, gas, brake, sum };
+	for (int i = 0; i < 4; i++) {
+		c[i * 2] = (uint8_t)(v[i] >> 8);
+		c[i * 2 + 1] = (uint8_t)v[i];
+	}
+	s12.eeprom_dirty = 1;
+}
+
 // ---- 16-bit bus (everything on the System 12 expansion bus is 16 bits wide in MAME) ----
 static uint16_t board_r16(uint32_t a)
 {
@@ -277,8 +305,10 @@ static uint16_t board_r16(uint32_t a)
 		return s12.shared[(a - 0x1f080000u) >> 1];
 	if (a >= 0x1f140000u && a < 0x1f141000u) {
 		// AT28C16 on byte lanes 0 and 2 (umask32 0x00ff00ff)
-		const uint32_t o = (a - 0x1f140000u) >> 1;
-		return s12.eeprom[o & 0x7ff];
+		const uint32_t o = ((a - 0x1f140000u) >> 1) & 0x7ff;
+		if (o == KD_CAL && s12.game && s12.game->machine == S12_M_KARTDUEL)
+			kartduel_calibrate();
+		return s12.eeprom[o];
 	}
 	if (s12.tektagt) {
 		if ((a & ~0x800000u) == 0x1f700000u || (a & ~0x800000u) == 0x1f700002u) {
@@ -325,6 +355,7 @@ static void board_w16(uint32_t a, uint16_t d)
 	}
 	if (a >= 0x1f140000u && a < 0x1f141000u) {
 		const uint32_t o = ((a - 0x1f140000u) >> 1) & 0x7ff;
+		s_eep_last = (int)o;
 		if (s12.eeprom[o] != (uint8_t)d) {
 			s12.eeprom[o] = (uint8_t)d;
 			s12.eeprom_dirty = 1;
@@ -355,8 +386,15 @@ static void board_w16(uint32_t a, uint16_t d)
 			*r = d;
 			return;
 		}
-		if ((a & ~3u) == 0x1f796000u)
-			return; // link CPU reset line (the link CPU is not emulated, as MAME without a LAN peer)
+		if ((a & ~3u) == 0x1f796000u) {
+			// link CPU reset line (MAME link_cpu_disable_w; the link CPU is not emulated). On release (0x1f796002) the
+			// program the game uploaded marks itself unlinked first (0xffff at its 0x1700), then without a LAN peer only
+			// sends hello packets. The game skips the link while byte 0x1f781701 is 0xff; seeing 0 it resets and
+			// reloads the link board every 31 frames, two 1M-iteration delay loops = ~20 frames without a picture.
+			if (a & 2)
+				s_link_ram[0x1700 >> 1] = s_link_ram[0x173e >> 1] = 0xffff;
+			return;
+		}
 	}
 	// MAME nopw: 0x1f008000, 0x1f010000, 0x1f018000, 0x1f1bff08-0f, and the program flash
 	if ((a & ~3u) == 0x1f008000u || (a & ~3u) == 0x1f010000u || (a & ~3u) == 0x1f018000u ||

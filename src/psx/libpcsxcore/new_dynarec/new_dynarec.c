@@ -40,6 +40,7 @@ static Jit g_jit;
 #include "../psxhle.h"
 #include "../psxinterpreter.h"
 #include "s12_hle.h" // ReSys12: game routines run natively
+#include "s12_bus.h" // ReSys12: board reads (ROM bank window loads)
 #include "../psxcounters.h"
 #include "../gte.h"
 #include "emu_if.h" // emulator interface
@@ -3381,11 +3382,25 @@ static void *emit_fastpath_cmp_jump(struct compile_state *st, int i,
 }
 
 // return memhandler, or get directly accessable address and return 0
+// ReSys12: the ROM bank window (0x1fa00000-0x1fbfffff) is mapped again at every bank switch (s12.c map_bank), so a
+// load from a constant address in it must find the bank when it runs, not keep the host address of the bank that was
+// mapped when the block was compiled (ptblank2 checks the bank with such a load and kept reading the old one)
+static u32 rs12_bank_read8(u32 a) { return s12_read8(a & 0x1fffffff); }
+static u32 rs12_bank_read16(u32 a) { return s12_read16(a & 0x1fffffff); }
+static u32 rs12_bank_read32(u32 a) { return s12_read32(a & 0x1fffffff); }
+
 static void *get_direct_memhandler(void *table, u_int addr,
   enum stub_type type, uintptr_t *addr_host)
 {
   uintptr_t msb = 1ull << (sizeof(uintptr_t)*8 - 1);
   uintptr_t l1, l2 = 0;
+  if (table == mem_rtab && (addr & 0x1fffffff) - 0x1fa00000u < 0x200000u) { // ReSys12: ROM bank window
+    if (type == LOADB_STUB || type == LOADBU_STUB)
+      return rs12_bank_read8;
+    if (type == LOADH_STUB || type == LOADHU_STUB)
+      return rs12_bank_read16;
+    return rs12_bank_read32;
+  }
   l1 = ((uintptr_t *)table)[addr>>12];
   if (!(l1 & msb)) {
     uintptr_t v = l1 << 1;

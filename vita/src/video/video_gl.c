@@ -14,6 +14,7 @@
 #include <string.h>
 
 #include "platform/log.h"
+#include "video/neon.h"
 
 #define NUM_TEX 6
 
@@ -433,6 +434,19 @@ void rs12_video_layer_rot(int slot, int rot)
 	if (slot >= 0 && slot < NLAYER)
 		s_layer[slot].rot = rot & 3;
 }
+static struct { RS12Tex *t; float x, y, r, a; } s_fx[RS12_FX_LAYERS];
+static int s_fx_ttl; // frames left: the menu calling this once a frame keeps it (a closed menu leaves nothing behind)
+void rs12_video_touch_fx(int slot, RS12Tex *t, float x, float y, float r, float a)
+{
+	if (slot < 0 || slot >= RS12_FX_LAYERS)
+		return;
+	s_fx[slot].t = t;
+	s_fx[slot].x = x;
+	s_fx[slot].y = y;
+	s_fx[slot].r = r;
+	s_fx[slot].a = a;
+	s_fx_ttl = 3;
+}
 static RS12Strip s_strip[RS12_NSTRIP];
 static int s_nstrip, s_strip_y0, s_strip_y1;
 void rs12_video_strips(const RS12Strip *s, int n, int y0, int y1)
@@ -484,7 +498,7 @@ void rs12_video_set_border(int border, int border_color)
 }
 
 // border artwork supplied by the user: ux0:data/resys12/artwork/<set>.png, stretched to the screen. Games without one get
-// the app's blank artwork (app0:assets/blankArtwork.png)
+// the moving corridor (neon.c)
 static RS12Tex *s_art;
 static int s_art_w, s_art_h;
 static uint8_t *load_png(const char *path, int *w, int *h)
@@ -519,12 +533,8 @@ void rs12_video_set_art(const char *set, const char *parent)
 		snprintf(path, sizeof(path), "ux0:data/resys12/artwork/%s.png", parent);
 		b = load_png(path, &w, &h);
 	}
-	if (!b) { // no artwork for this game: the app's blank artwork, as it is
-		snprintf(path, sizeof(path), "app0:assets/blankArtwork.png");
-		b = load_png(path, &w, &h);
-	}
 	if (!b) {
-		RS12_LOG("video: %s artwork missing (Border Artwork falls back to the border colour)", set);
+		RS12_LOG("video: %s artwork missing (neon corridor)", set);
 		return;
 	}
 	if (w > 2048 || h > 2048 || (s_art && (w > s_art->w || h > s_art->h))) {
@@ -633,7 +643,8 @@ static void draw_scene(void)
 	s_pic_w = dw;
 	s_pic_h = dh;
 	const int use_art = i >= 0 && s_border == 1 && s_aspect != 2 && s_art && s_art_w > 0;
-	if (i >= 0 && s_border && s_aspect != 2 && !use_art) {
+	const int use_neon = i >= 0 && s_border == 1 && s_aspect != 2 && !use_art;
+	if (i >= 0 && s_border && s_aspect != 2 && !use_art && !use_neon) {
 		float c[3];
 		border_rgb(c);
 		glClearColor(c[0], c[1], c[2], 1);
@@ -643,6 +654,9 @@ static void draw_scene(void)
 	if (use_art) {
 		glBindTexture(GL_TEXTURE_2D, s_art->gl);
 		draw_quad(0, 0, 960, 544, (float)s_art_w / s_art->w, (float)s_art_h / s_art->h);
+	} else if (use_neon) {
+		extern uint32_t rs12_menu_accent(void);
+		rs12_neon_draw(s_pic_x, s_pic_w, rs12_menu_accent());
 	}
 	if (i >= 0) {
 		glBindTexture(GL_TEXTURE_2D, s_is16[i] ? s_tex16[i] : s_tex[i]);
@@ -701,6 +715,24 @@ static void draw_scene(void)
 		if (a < 1.0f)
 			glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
 	}
+	if (s_fx_ttl > 0) { // the touch effect, over everything: light added
+		s_fx_ttl--;
+		for (int k = 0; k < RS12_FX_LAYERS && s_fx_ttl > 0; k++) {
+			if (!s_fx[k].t || s_fx[k].a <= 0.0f)
+				continue;
+			if (!blend) {
+				glEnable(GL_BLEND);
+				blend = 1;
+			}
+			glBlendFunc(GL_ONE, GL_ONE);
+			glBindTexture(GL_TEXTURE_2D, s_fx[k].t->gl);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+			glColor4f(s_fx[k].a, s_fx[k].a, s_fx[k].a, s_fx[k].a);
+			draw_quad(s_fx[k].x - s_fx[k].r, s_fx[k].y - s_fx[k].r, s_fx[k].x + s_fx[k].r, s_fx[k].y + s_fx[k].r, 1.0f, 1.0f);
+		}
+		glColor4f(1.0f, 1.0f, 1.0f, 1.0f);
+	}
 	if (blend)
 		glDisable(GL_BLEND);
 }
@@ -743,6 +775,12 @@ void rs12_video_present(void)
 		pace_adaptive();
 	else if (rs12_video_vsync_pace)
 		sceDisplayWaitVblankStart(); // (the frame goes on screen at this vblank; the next one starts right after it)
+}
+
+void rs12_video_present_dialog(void)
+{
+	draw_scene();
+	vglSwapBuffers(GL_TRUE);
 }
 
 int rs12_video_capture_ppm(const char *path)

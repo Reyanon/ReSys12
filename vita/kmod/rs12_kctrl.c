@@ -2,7 +2,7 @@
 // lock holds it (no sceCtrlPeekBuffer* reported it on the device), and a kernel read made inside the app's syscall
 // only saw a long press, so a kernel thread of this module reads the pad every 8 ms, counts presses and double presses
 // (home only on a double press), and on request presses PS for the system (button emulation) to go home.
-// The module name carries a version (rs12_kctrl_v4): a loaded module stays until reboot, and a new export under an
+// The module name carries a version (rs12_kctrl_v5): a loaded module stays until reboot, and a new export under an
 // old name would never be linked.
 #include <psp2kern/ctrl.h>
 #include <psp2kern/kernel/cpu.h>
@@ -13,6 +13,7 @@
 #include <psp2kern/io/stat.h>
 #include <psp2kern/io/dirent.h>
 #include <psp2kern/kernel/sysmem/uid_puid.h>
+#include <taihen.h>
 
 #define POLL_US 8000
 #define DOUBLE_POLLS 50 // a second press within 400 ms is a double press
@@ -301,6 +302,80 @@ int rs12KCtrlInstallOnExit(void)
 	return 0;
 }
 
+// ---- CPU3 for the app's threads. CPU3 is closed to apps by a CPU mask check in SceKernelThreadMgr; the CapUnlocker plugin
+// (GrapheneCt, MIT) hooks it at text offset 0x114C to return 0. The same here, but only where that code is the known one:
+// the module's NID differs on every firmware, the function need not, and the first 64 bytes hold the function's head and
+// both branches making the refusal 0x80028025, with no relocated value. Anything else: no hook, the app uses three cores ----
+#define CPU3_OFFSET 0x114c // (Thumb)
+#define CPU3_CODE 64
+static const uint8_t s_cpu3_ok[][CPU3_CODE] = {
+	{ // (read on 3.65)
+		0x10, 0xb5, 0xa0, 0xb1, 0x53, 0x6f, 0x5b, 0x69, 0xb3, 0xf1, 0x00, 0x7f, 0x20, 0xd0, 0x0f, 0xd8,
+		0xb3, 0xf1, 0x80, 0x7f, 0x3c, 0xd1, 0x30, 0xf0, 0x07, 0x00, 0x08, 0xd0, 0x48, 0xf2, 0x25, 0x00,
+		0x11, 0xf4, 0x80, 0x4f, 0xc8, 0xf2, 0x02, 0x00, 0x18, 0xbf, 0x00, 0x20, 0x10, 0xbd, 0x10, 0xbd,
+		0xb3, 0xf1, 0x80, 0x6f, 0x02, 0xd0, 0xb3, 0xf1, 0xa0, 0x6f, 0x29, 0xd1, 0x48, 0xf2, 0x25, 0x03,
+	},
+};
+int module_get_offset(SceUID pid, SceUID modid, int segidx, size_t offset, uintptr_t *addr); // (taiHEN module utils)
+static tai_hook_ref_t s_cpu3_ref;
+static SceUID s_cpu3_hook = -1;
+static int cpu3_check_patched(void) { return 0; } // (the check passes)
+
+int rs12KCtrlCpu3(int on, unsigned int *out)
+{
+	int state;
+	ENTER_SYSCALL(state);
+	unsigned int o[4] = { 0, 0, 0, 0 };
+	int r = 0;
+	tai_module_info_t ti;
+	ti.size = sizeof(ti);
+	if (taiGetModuleInfoForKernel(KERNEL_PID, "SceKernelThreadMgr", &ti) < 0)
+		r = 3;
+	else {
+		o[0] = ti.module_nid;
+		const uint8_t *code = NULL;
+		uintptr_t a = 0;
+		if (module_get_offset(KERNEL_PID, ti.modid, 0, CPU3_OFFSET, &a) >= 0 && a) {
+			code = (const uint8_t *)a;
+			if (s_cpu3_hook < 0) // (hooked, the bytes there are taiHEN's)
+				for (int i = 0; i < 4; i++) {
+					o[1] |= (unsigned int)code[i] << (8 * i);
+					o[2] |= (unsigned int)code[4 + i] << (8 * i);
+				}
+		} else
+			r = 4;
+		if (r == 0 && on == 1 && s_cpu3_hook < 0) {
+			int ok = 0;
+			for (unsigned i = 0; i < sizeof(s_cpu3_ok) / sizeof(s_cpu3_ok[0]); i++) {
+				int same = 1;
+				for (int k = 0; k < CPU3_CODE; k++)
+					same &= code[k] == s_cpu3_ok[i][k];
+				ok |= same;
+			}
+			if (!ok)
+				r = 2; // (nothing done)
+			else {
+				const SceUID h = taiHookFunctionOffsetForKernel(KERNEL_PID, &s_cpu3_ref, ti.modid, 0, CPU3_OFFSET, 1,
+					cpu3_check_patched);
+				if (h >= 0)
+					s_cpu3_hook = h;
+				else
+					r = h;
+			}
+		} else if (r == 0 && on == 0 && s_cpu3_hook >= 0) {
+			taiHookReleaseForKernel(s_cpu3_hook, s_cpu3_ref);
+			s_cpu3_hook = -1;
+		}
+	}
+	if (r == 0)
+		r = s_cpu3_hook >= 0;
+	o[3] = s_cpu3_hook >= 0;
+	if (out)
+		ksceKernelMemcpyKernelToUser(out, o, sizeof(o));
+	EXIT_SYSCALL(state);
+	return r;
+}
+
 int module_start(SceSize args, void *argp);
 int _start(SceSize args, void *argp) __attribute__((weak, alias("module_start")));
 int module_start(SceSize args, void *argp)
@@ -320,6 +395,10 @@ int module_stop(SceSize args, void *argp)
 	(void)argp;
 	s_run = 0;
 	s_prof_run = 0;
+	if (s_cpu3_hook >= 0) {
+		taiHookReleaseForKernel(s_cpu3_hook, s_cpu3_ref);
+		s_cpu3_hook = -1;
+	}
 	if (s_prof_thread >= 0) {
 		ksceKernelWaitThreadEnd(s_prof_thread, NULL, NULL);
 		ksceKernelDeleteThread(s_prof_thread);

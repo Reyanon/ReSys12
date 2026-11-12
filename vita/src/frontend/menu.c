@@ -17,6 +17,7 @@
 #include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <strings.h>
 #include <string.h>
 
 #include "common/re_pad.h"
@@ -30,6 +31,7 @@
 #include "s12.h" // s12_analog_kind (gun / wheel / lever rows)
 #include "s12_rom.h"
 #include "video/video.h"
+#include "frontend/ime.h"
 // Device choice list: each source with its device ("Controller 1: Switch Pro")
 static char s_devtext[RE_PAD_SRC_COUNT][40];
 
@@ -121,7 +123,8 @@ static const Theme *theme(void)
 #define COL_ITEM  (theme()->item) // rows that are not selected
 #define COL_DIM   (theme()->dim)
 #define COL_SEL   (theme()->sel)
-#define COL_BRAND UI_RGBA(0xFF, 0x40, 0x40, 0xFF) // "Sys12" as in the app art (every theme)
+// "Sys12": the theme's colour; Graphite has none of its own, red as in the app art
+#define COL_BRAND (g_set.theme == RS12_THEME_GRAPHITE ? UI_RGBA(0xFF, 0x40, 0x40, 0xFF) : COL_SEL)
 #define COL_WARN  UI_RGBA(0xFF, 0xC0, 0x40, 0xFF)
 #define COL_HILITE (theme()->hilite) // selected row bar
 #define COL_EDGE  (theme()->edge)   // panel outline, separators
@@ -238,6 +241,24 @@ static void focus_tick(void)
 	const float p = 0.5f + 0.5f * sinf((float)(rs12_time_us() % 1000000) * 6.2832f / 1e6f);
 	rs12_video_layer_alpha(1, 0.12f + 0.88f * p);
 }
+// the settings button: a gear of eight teeth with a hole, edges smoothed as the star's
+static void gear(UiCanvas *c, float cx, float cy, float r, uint32_t rgb)
+{
+	const float body = r * 0.72f, hole = r * 0.32f;
+	for (int py = (int)(cy - r) - 1; py <= (int)(cy + r) + 1; py++)
+		for (int px = (int)(cx - r) - 1; px <= (int)(cx + r) + 1; px++) {
+			int hits = 0;
+			for (int s = 0; s < 16; s++) {
+				const float dx = px + 0.125f + 0.25f * (s & 3) - cx, dy = py + 0.125f + 0.25f * (s >> 2) - cy;
+				const float d = sqrtf(dx * dx + dy * dy);
+				if (d < hole || d > r)
+					continue;
+				hits += d <= body || cosf(8.0f * atan2f(dy, dx)) > 0.25f; // (the teeth: the outer ring in 8 places)
+			}
+			if (hits)
+				ui_rect(c, px, py, 1, 1, (rgb & 0x00FFFFFFu) | ((uint32_t)(hits * 255 / 16) << 24));
+		}
+}
 // favourites as a star: five points, edges smoothed (4 x 4 samples a pixel)
 static void star(UiCanvas *c, float cx, float cy, float r, uint32_t rgb)
 {
@@ -316,6 +337,10 @@ static uint32_t blend_px(uint32_t d, uint32_t c)
 	return o;
 }
 #define LIST_FOOT_H 40 // the list's footer band (one line of button help)
+// the settings button at the footer's right (touch; START too)
+#define GEAR_CX  (SCREEN_W - 32)
+#define GEAR_CY  (SCREEN_H - LIST_FOOT_H / 2)
+#define GEAR_R   13
 static const uint32_t *theme_rows(int bands)
 {
 	static uint32_t rows[2][SCREEN_H];
@@ -348,6 +373,13 @@ static const char *const s_keymap2_keys[RS12_ACT_COUNT] = { "key2_b1", "key2_b2"
 	"key2_coin", "key2_start" };
 static int s_changed; // settings changed since the menu opened (saved on close only then)
 
+// a stick as the d-pad, or pressing nothing
+static void stick_preset(rs12_port *p, int st, int dpad)
+{
+	for (int d = 0; d < RS12_SDIR_COUNT; d++)
+		p->smap[st][d] = dpad ? RS12_STGT_UP + d : RS12_STGT_NONE;
+}
+
 void rs12_settings_default_port(int port)
 {
 	if (port < 0 || port >= RS12_PROFILES) // (a profile: re_pad_profile)
@@ -362,7 +394,11 @@ void rs12_settings_default_port(int port)
 	p->keymap[RS12_ACT_B6] = RS12_KEY_L;
 	p->keymap[RS12_ACT_COIN] = RS12_KEY_SELECT;
 	p->keymap[RS12_ACT_START] = RS12_KEY_START;
-	p->stick = RS12_STICK_LEFT;
+	stick_preset(p, 0, 1);
+	stick_preset(p, 1, 0);
+	for (int a = 0; a < RS12_ACT_COUNT; a++)
+		for (int x = 0; x < RS12_KEY_EXTRA; x++)
+			p->keyx[a][x] = RS12_KEY_NONE;
 	p->turbo_key = RS12_KEY_NONE;
 	p->turbo_btn = 1;
 	p->turbo_speed = RS12_TURBO_FAST;
@@ -407,17 +443,48 @@ void rs12_settings_defaults(void)
 	rs12_settings_default_keys();
 }
 
+uint32_t rs12_menu_accent(void)
+{
+	const int k = g_set.theme >= 0 && g_set.theme < RS12_THEME_COUNT ? g_set.theme : 0;
+	return UI_RGBA(s_theme_def[k].sel[0], s_theme_def[k].sel[1], s_theme_def[k].sel[2], 0xFF);
+}
+
 uint32_t rs12_key_code(int key)
 {
 	static const uint32_t codes[RS12_KEY_COUNT] = { SCE_CTRL_CROSS, SCE_CTRL_CIRCLE, SCE_CTRL_SQUARE, SCE_CTRL_TRIANGLE,
-		SCE_CTRL_LTRIGGER, SCE_CTRL_RTRIGGER, SCE_CTRL_SELECT, SCE_CTRL_START, RE_PAD_L2, RE_PAD_R2, RE_PAD_L3, RE_PAD_R3 };
+		SCE_CTRL_LTRIGGER, SCE_CTRL_RTRIGGER, SCE_CTRL_SELECT, SCE_CTRL_START, RE_PAD_L2, RE_PAD_R2, RE_PAD_L3, RE_PAD_R3,
+		0x00020000u, 0x00040000u, 0x00400000u, 0x00800000u, 0x10000000u, 0x20000000u, 0x40000000u, 0x80000000u,
+		RS12_STICK_BITS_L, RS12_STICK_BITS_R };
 	return key >= 0 && key < RS12_KEY_COUNT ? codes[key] : 0;
+}
+
+uint32_t rs12_act_bits(const rs12_port *p, int act)
+{
+	uint32_t b = rs12_key_code(p->keymap[act]);
+	for (int x = 0; x < RS12_KEY_EXTRA; x++)
+		b |= rs12_key_code(p->keyx[act][x]);
+	return b;
+}
+
+uint32_t rs12_stick_bits(int lx, int ly, int rx, int ry)
+{
+	uint32_t b = 0;
+	if (ly < 80) b |= rs12_key_code(RS12_KEY_LUP);
+	if (ly > 176) b |= rs12_key_code(RS12_KEY_LDOWN);
+	if (lx < 80) b |= rs12_key_code(RS12_KEY_LLEFT);
+	if (lx > 176) b |= rs12_key_code(RS12_KEY_LRIGHT);
+	if (ry < 80) b |= rs12_key_code(RS12_KEY_RUP);
+	if (ry > 176) b |= rs12_key_code(RS12_KEY_RDOWN);
+	if (rx < 80) b |= rs12_key_code(RS12_KEY_RLEFT);
+	if (rx > 176) b |= rs12_key_code(RS12_KEY_RRIGHT);
+	return b;
 }
 
 const char *rs12_key_name(int key)
 {
 	static const char *const n[RS12_KEY_COUNT] = { "Cross", "Circle", "Square", "Triangle", "L", "R", "Select", "Start", "L2", "R2",
-		"L3", "R3" };
+		"L3", "R3", "L-Stick Up", "L-Stick Down", "L-Stick Left", "L-Stick Right", "R-Stick Up", "R-Stick Down", "R-Stick Left",
+		"R-Stick Right", "L-Stick", "R-Stick" };
 	return key >= 0 && key < RS12_KEY_COUNT ? n[key] : "None";
 }
 
@@ -453,7 +520,7 @@ void rs12_settings_apply_video(void)
 static int clampi(int v, int lo, int hi) { return v < lo ? lo : v > hi ? hi : v; }
 // a key from a settings file: files before L2 / R2 / L3 / R3 (no keyver=2 line first) had None as 8
 static int s_keyver;
-static int key_val(int v, int hi) { return clampi(s_keyver < 2 && v == 8 ? RS12_KEY_NONE : v, 0, hi); }
+static int key_val(int v, int hi) { return clampi((s_keyver < 2 && v == 8) || (s_keyver < 4 && v == 12) || (s_keyver < 5 && v == 20) ? RS12_KEY_NONE : v, 0, hi); }
 
 int rs12_dip_service;
 static const char *const s_combo_keys[RS12_KEY_COUNT] = { "cross", "circle", "square", "triangle", "l", "r", NULL, NULL,
@@ -531,7 +598,15 @@ static int read_port(const char *key, int val)
 		p = &g_set.port[1];
 		key += 3;
 	}
-	if (!strcmp(key, "stick")) p->stick = clampi(val, 0, RS12_STICK_COUNT - 1);
+	if (!strcmp(key, "stick")) { // (files before each stick had its own map: 0 off, 1 left, 2 right, 3 both as the d-pad)
+		stick_preset(p, 0, val == 1 || val == 3);
+		stick_preset(p, 1, val == 2 || val == 3);
+	} else if (!strncmp(key, "smap_", 5) && (key[5] == '0' || key[5] == '1') && key[6] >= '0' &&
+		key[6] < '0' + RS12_SDIR_COUNT && !key[7])
+		p->smap[key[5] - '0'][key[6] - '0'] = clampi(val, 0, RS12_STGT_COUNT - 1);
+	else if (!strncmp(key, "keyx_", 5) && key[5] >= '0' && key[5] < '0' + RS12_ACT_COUNT && key[6] == '_' && key[7] >= '0' &&
+		key[7] < '0' + RS12_KEY_EXTRA && !key[8])
+		p->keyx[key[5] - '0'][key[7] - '0'] = key_val(val, RS12_KEY_NONE);
 	else if (!strcmp(key, "turbo_key")) p->turbo_key = key_val(val, RS12_KEY_NONE);
 	else if (!strcmp(key, "turbo_btn")) p->turbo_btn = clampi(val, 1, RS12_GAME_BUTTONS);
 	else if (!strcmp(key, "turbo_speed")) p->turbo_speed = clampi(val, 0, RS12_TURBO_SPEED_COUNT - 1);
@@ -597,7 +672,7 @@ static int read_part(const char *key, int val)
 }
 static void write_part(FILE *f, const game_part *g)
 {
-	fprintf(f, "keyver=3\n"); // (first: the keys below are read with it; 3: a profile per device)
+	fprintf(f, "keyver=5\n"); // (first: the keys below are read with it; 3: a profile per device, 4, 5: the sticks)
 	fprintf(f, "show_fps=%d\naspect=%d\nfilter=%d\n", g->fps, g->aspect, g->filter);
 	fprintf(f, "scan_type=%d\nscan_strength=%d\n", g->scan_type, g->scan_strength);
 	fprintf(f, "border=%d\nborder_color=%d\nrotate=%d\n", g->border, g->border_color, g->rotate);
@@ -607,8 +682,14 @@ static void write_part(FILE *f, const game_part *g)
 		snprintf(pre, sizeof(pre), "%s.", re_pad_profile_key(i));
 		for (int a = 0; a < RS12_ACT_COUNT; a++)
 			fprintf(f, "%s%s=%d\n", pre, s_keymap_keys[a], p->keymap[a]);
-		fprintf(f, "%sstick=%d\n%sturbo_key=%d\n%sturbo_btn=%d\n%sturbo_speed=%d\n", pre, p->stick, pre, p->turbo_key, pre,
-			p->turbo_btn, pre, p->turbo_speed);
+		for (int a = 0; a < RS12_ACT_COUNT; a++)
+			for (int x = 0; x < RS12_KEY_EXTRA; x++)
+				if (p->keyx[a][x] < RS12_KEY_COUNT)
+					fprintf(f, "%skeyx_%d_%d=%d\n", pre, a, x, p->keyx[a][x]);
+		for (int st = 0; st < 2; st++)
+			for (int d = 0; d < RS12_SDIR_COUNT; d++)
+				fprintf(f, "%ssmap_%d%d=%d\n", pre, st, d, p->smap[st][d]);
+		fprintf(f, "%sturbo_key=%d\n%sturbo_btn=%d\n%sturbo_speed=%d\n", pre, p->turbo_key, pre, p->turbo_btn, pre, p->turbo_speed);
 		for (int k = 0; k < RS12_KEY_COUNT; k++)
 			if (s_combo_keys[k])
 				fprintf(f, "%scombo_%s=%d\n", pre, s_combo_keys[k], p->combo[k]);
@@ -721,10 +802,10 @@ void rs12_settings_load(void)
 	re_pad_set_source(0, g_set.pad_src[0]);
 	re_pad_set_source(1, g_set.pad_src[1]);
 	g_set.input_engine = re_pad_engine_fit(g_set.input_engine); // (as the Vita is: VitaControl when a list loads it)
-	RS12_LOG("settings: fps %d aspect %d filter %d border %d/%d rotate %d keys %d %d %d %d %d %d coin %d start %d stick %d turbo %d/%d",
+	RS12_LOG("settings: fps %d aspect %d filter %d border %d/%d rotate %d keys %d %d %d %d %d %d coin %d start %d sticks %d %d turbo %d/%d",
 		g_set.fps, g_set.aspect, g_set.filter, g_set.border, g_set.border_color, g_set.rotate, g_set.port[0].keymap[0],
 		g_set.port[0].keymap[1], g_set.port[0].keymap[2], g_set.port[0].keymap[3], g_set.port[0].keymap[4], g_set.port[0].keymap[5],
-		g_set.port[0].keymap[6], g_set.port[0].keymap[7], g_set.port[0].stick, g_set.port[0].turbo_key, g_set.port[0].turbo_btn);
+		g_set.port[0].keymap[6], g_set.port[0].keymap[7], g_set.port[0].smap[0][0], g_set.port[0].smap[1][0], g_set.port[0].turbo_key, g_set.port[0].turbo_btn);
 }
 
 static void game_cfg_path(char *p, int len)
@@ -881,8 +962,9 @@ int rs12_game_buttons(const char *set)
 // ================================ menu state ================================
 static char s_set[32], s_title[96];
 static UiCanvas *s_cv, *s_osd_cv, *s_fps_cv;
-enum { PAGE_MAIN, PAGE_STATES, PAGE_DISPLAY, PAGE_CONTROLS, PAGE_ABOUT, PAGE_COMBO, PAGE_ANALOG, PAGE_TURBO, PAGE_TOUCH, PAGE_TEDIT, PAGE_PORT };
+enum { PAGE_MAIN, PAGE_STATES, PAGE_DISPLAY, PAGE_CONTROLS, PAGE_ABOUT, PAGE_COMBO, PAGE_ANALOG, PAGE_TURBO, PAGE_TOUCH, PAGE_TEDIT, PAGE_PORT, PAGE_STICK };
 static int s_page; // (defined with the other menu state below)
+static int s_mt_wait_up; // the finger that left the touch layout editor: not a tap on the page it came back to
 // rows in groups (a gap before M_STATES, M_DISPLAY and M_ABOUT): game, states, settings, about / leave.
 // M_REFRESH (read the ROM folder again) only in the game list options
 enum { M_RESUME, M_RESET, M_SERVICE, M_STATES, M_DISPLAY, M_CONTROLS, M_GAME_SAVE, M_GAME_DEL, M_ABOUT, M_SELECT_GAME, M_EXIT,
@@ -898,6 +980,7 @@ static int main_list(int *k)
 		k[n++] = M_DISPLAY;
 		k[n++] = M_CONTROLS;
 		k[n++] = M_REFRESH;
+		k[n++] = M_ABOUT;
 		k[n++] = M_BACK;
 		return n;
 	}
@@ -921,17 +1004,21 @@ enum { D_FPS, D_ASPECT, D_ROTATE, D_FILTER, D_BORDER, D_BORDER_COL, D_LATENCY, D
 static const char *const s_latency_name[RS12_LATENCY_COUNT] = { "Normal", "Low (may stutter)" };
 // Controls (RetroArch style): Port 1 Controls, Port 2 Controls, the gun / wheel / lever page (games that have one), Touch
 // controls, menu confirm button, defaults (every port), back.
-// Port N Controls (PAGE_PORT, s_kp = the port): device, analog stick, Set all controls, the game buttons (as many as the
+// Port N Controls (PAGE_PORT, s_kp = the port): device, analog sticks, Set all controls, the game buttons (as many as the
 // game uses, 6 in list options), coin, start, Turbo, Combo keys, reset this port, back. A key row: left / right step
 // through the keys, confirm waits for the button to press (key binding).
 // Turbo page: turbo key, turbo button, turbo speed, back (the port's). Gun / wheel / lever page (PAGE_ANALOG): only that
-// game's kind of rows, then back (CK_ABACK)
+// game's kind of rows, then back (CK_ABACK). Analog sticks page (PAGE_STICK): each stick's row (d-pad or off), then what
+// each of its four directions presses, then back
 enum { CK_ACT, CK_TURBO_KEY, CK_TURBO_BTN, CK_TURBO_SPEED, CK_TURBO, CK_STICK, CK_AIM_STICK, CK_AIM_MODE, CK_GUN_SENS,
 	CK_CROSSHAIR, CK_GUN_FIRE, CK_GUN_SENSOR, CK_WHEEL_STICK, CK_GAS, CK_BRAKE, CK_LEVER_STICK, CK_CONFIRM, CK_COMBO,
 	CK_DEFAULTS, CK_BACK, CK_ANALOG, CK_ABACK, CK_TOUCH, CK_TOUCH_GUN, CK_T_ON, CK_T_SHOW, CK_T_EDIT, CK_T_CLEAR,
-	CK_PORT1, CK_PORT2, CK_DEVICE, CK_BIND_ALL, CK_RESET_PORT, CK_ENGINE };
+	CK_PORT1, CK_PORT2, CK_DEVICE, CK_BIND_ALL, CK_RESET_PORT, CK_ENGINE, CK_SMAP_SET, CK_SMAP_DIR, CK_ACT2 };
 // Combo keys page: one row per Vita key (s_combo_order), then Back. Confirm opens the choice window
 #define COMBO_ROWS (RS12_COMBO_SRC + 1)
+// Analog sticks page: per stick its row and the four directions; act = the row (stick = act / STICK_ROWS)
+#define STICK_ROWS (1 + RS12_SDIR_COUNT)
+#define STICK_PAGE_ROWS (2 * STICK_ROWS + 1)
 static int s_nbuttons = RS12_GAME_BUTTONS;
 static int ctrl_buttons(void) { return s_list_mode ? RS12_GAME_BUTTONS : s_nbuttons; }
 // the port whose page is open (0 = Port 1 = 1P, 1 = Port 2 = 2P): its settings
@@ -981,31 +1068,68 @@ static const int s_port_tail[] = { CK_TURBO, CK_COMBO, CK_RESET_PORT, CK_BACK };
 // the player reads no device (Device None, or its controller away with nothing free): its page has only Device and Back
 // (the controls belong to a device: with none there is nothing to set)
 static int port_none(void) { return re_pad_port(s_kp) < 0; }
-static int port_rows(void) { return port_none() ? 2 : PORT_HEAD + ctrl_buttons() + 2 + PORT_TAIL; }
-static int port_kind(int i, int *act)
+// an action's rows: its key, then one row for each more key (CK_ACT2: act = the action + (which more key + 1) * 256)
+#define ACT2_ACT(v) ((v) & 0xFF)
+#define ACT2_X(v) (((v) >> 8) - 1)
+#define KEY_PENDING (RS12_KEY_NONE + 1) // (a more key waiting for its button)
+static int act_extras(int a)
+{
+	int n = 0;
+	while (n < RS12_KEY_EXTRA && prt()->keyx[a][n] != RS12_KEY_NONE)
+		n++;
+	return n;
+}
+static void act_remove(int a, int x) // (the ones after it move up)
+{
+	for (; x + 1 < RS12_KEY_EXTRA; x++)
+		prt()->keyx[a][x] = prt()->keyx[a][x + 1];
+	prt()->keyx[a][RS12_KEY_EXTRA - 1] = RS12_KEY_NONE;
+}
+static int act_of(int j) // the actions on the page: the game's buttons, coin, start
 {
 	const int b = ctrl_buttons();
+	return j < b ? RS12_ACT_B1 + j : j == b ? RS12_ACT_COIN : RS12_ACT_START;
+}
+static int act_rows(void)
+{
+	int n = 0;
+	for (int j = 0; j < ctrl_buttons() + 2; j++)
+		n += 1 + act_extras(act_of(j));
+	return n;
+}
+static int port_rows(void) { return port_none() ? 2 : PORT_HEAD + act_rows() + PORT_TAIL; }
+static int port_kind(int i, int *act)
+{
 	*act = -1;
 	if (port_none())
 		return i == 0 ? CK_DEVICE : CK_BACK;
 	if (i < PORT_HEAD)
 		return s_port_head[i];
 	i -= PORT_HEAD;
-	if (i < b) {
-		*act = RS12_ACT_B1 + i;
-		return CK_ACT;
+	for (int j = 0; j < ctrl_buttons() + 2; j++) {
+		const int a = act_of(j), ne = act_extras(a);
+		if (i == 0) {
+			*act = a;
+			return CK_ACT;
+		}
+		if (i <= ne) {
+			*act = a | i << 8;
+			return CK_ACT2;
+		}
+		i -= 1 + ne;
 	}
-	if (i < b + 2) {
-		*act = i == b ? RS12_ACT_COIN : RS12_ACT_START;
-		return CK_ACT;
-	}
-	return i - b - 2 < PORT_TAIL ? s_port_tail[i - b - 2] : CK_BACK;
+	return i < PORT_TAIL ? s_port_tail[i] : CK_BACK;
 }
 // row of a key action on the Port page
 static int port_row_of_act(int act)
 {
-	const int b = ctrl_buttons();
-	return PORT_HEAD + (act == RS12_ACT_COIN ? b : act == RS12_ACT_START ? b + 1 : act - RS12_ACT_B1);
+	int r = PORT_HEAD;
+	for (int j = 0; j < ctrl_buttons() + 2; j++) {
+		if (act_of(j) == act)
+			break;
+		r += 1 + act_extras(act_of(j));
+	}
+	return r;
 }
 static int analog_rows(int *k)
 {
@@ -1050,9 +1174,12 @@ static int ctrl_row_of(int kind)
 }
 static int port_row_of(int kind)
 {
+	for (int j = 0; j < PORT_HEAD; j++)
+		if (s_port_head[j] == kind)
+			return j;
 	for (int j = 0; j < PORT_TAIL; j++)
 		if (s_port_tail[j] == kind)
-			return PORT_HEAD + ctrl_buttons() + 2 + j;
+			return PORT_HEAD + act_rows() + j;
 	return 0;
 }
 // current row's kind: Controls, Port, Turbo, Touch or the gun / wheel / lever page
@@ -1061,6 +1188,10 @@ static int row_kind(int i, int *act)
 	*act = -1;
 	if (s_page == PAGE_TURBO)
 		return i < 3 ? CK_TURBO_KEY + i : CK_BACK;
+	if (s_page == PAGE_STICK) {
+		*act = i;
+		return i >= 2 * STICK_ROWS ? CK_BACK : i % STICK_ROWS ? CK_SMAP_DIR : CK_SMAP_SET;
+	}
 	if (s_page == PAGE_PORT)
 		return port_kind(i, act);
 	if (s_page == PAGE_TOUCH) {
@@ -1077,7 +1208,7 @@ static int row_kind(int i, int *act)
 	return i >= 0 && i < n ? k[i] : CK_BACK;
 }
 #define CTRL_PAGE (s_page == PAGE_CONTROLS || s_page == PAGE_TURBO || s_page == PAGE_ANALOG || s_page == PAGE_TOUCH || \
-	s_page == PAGE_PORT)
+	s_page == PAGE_PORT || s_page == PAGE_STICK)
 static const char *act_name(int act)
 {
 	static const char *const n[RS12_ACT_COUNT] = { "Button 1", "Button 2", "Button 3", "Button 4", "Button 5", "Button 6", "Coin",
@@ -1098,6 +1229,10 @@ static int key_uses(KeyUse *u)
 			u[n++] = (KeyUse){ prt()->keymap[a], a, act_name(a) };
 	u[n++] = (KeyUse){ prt()->keymap[RS12_ACT_COIN], RS12_ACT_COIN, "Coin" };
 	u[n++] = (KeyUse){ prt()->keymap[RS12_ACT_START], RS12_ACT_START, "Start" };
+	for (int a = 0; a < RS12_ACT_COUNT; a++)
+		for (int x = 0; x < RS12_KEY_EXTRA; x++)
+			if (prt()->keyx[a][x] < RS12_KEY_COUNT && (a >= RS12_ACT_COIN || a < ctrl_buttons()))
+				u[n++] = (KeyUse){ prt()->keyx[a][x], a, act_name(a) };
 	if (prt()->turbo_key < RS12_KEY_COUNT)
 		u[n++] = (KeyUse){ prt()->turbo_key, KF_TURBO, "Turbo key" };
 	for (int k = 0; k < RS12_KEY_COUNT; k++)
@@ -1122,7 +1257,7 @@ static int key_uses(KeyUse *u)
 // another use of key that presses something else, or NULL
 static const char *key_clash(int key, int func)
 {
-	KeyUse u[32];
+	KeyUse u[64];
 	const int n = key >= 0 && key < RS12_KEY_COUNT ? key_uses(u) : 0;
 	for (int j = 0; j < n; j++)
 		if (u[j].key == key && u[j].func != func)
@@ -1134,6 +1269,7 @@ static int row_key(int kind, int act, int *key, int *func)
 {
 	switch (kind) {
 	case CK_ACT: *key = prt()->keymap[act]; *func = act; return 1;
+	case CK_ACT2: *key = prt()->keyx[ACT2_ACT(act)][ACT2_X(act)]; *func = ACT2_ACT(act); return 1;
 	case CK_TURBO_KEY: *key = prt()->turbo_key; *func = KF_TURBO; return 1;
 	case CK_GUN_FIRE: *key = g_set.gun_fire; *func = menu_golgo() ? RS12_ACT_B2 : RS12_ACT_B1; return 1;
 	case CK_GUN_SENSOR: *key = g_set.gun_sensor; *func = KF_SENSOR; return 1;
@@ -1147,6 +1283,12 @@ static void row_set_key(int kind, int act, int key)
 {
 	switch (kind) {
 	case CK_ACT: prt()->keymap[act] = key; break;
+	case CK_ACT2:
+		if (key == RS12_KEY_NONE)
+			act_remove(ACT2_ACT(act), ACT2_X(act));
+		else
+			prt()->keyx[ACT2_ACT(act)][ACT2_X(act)] = key;
+		break;
 	case CK_TURBO_KEY: prt()->turbo_key = key; break;
 	case CK_GUN_FIRE: g_set.gun_fire = key; break;
 	case CK_GUN_SENSOR: g_set.gun_sensor = key; break;
@@ -1157,7 +1299,7 @@ static void row_set_key(int kind, int act, int key)
 // name of such a row
 static const char *row_key_name(int kind, int act)
 {
-	return kind == CK_ACT ? act_name(act) : kind == CK_TURBO_KEY ? "Turbo key" : kind == CK_GUN_FIRE ? "Gun trigger" :
+	return kind == CK_ACT ? act_name(act) : kind == CK_ACT2 ? act_name(ACT2_ACT(act)) : kind == CK_TURBO_KEY ? "Turbo key" : kind == CK_GUN_FIRE ? "Gun trigger" :
 		kind == CK_GUN_SENSOR ? "Gun scope sensor" : kind == CK_GAS ? "Gas pedal" : "Brake pedal";
 }
 // notice after a key change that made a duplicate (not while the choice window steps to a value)
@@ -1181,9 +1323,12 @@ static const char *row_help(int kind)
 	case CK_CONFIRM: return "The button that confirms in the menus (the other one goes back)";
 	case CK_DEFAULTS: return "Every player's buttons, analog stick, turbo and combo keys back to the defaults";
 	case CK_DEVICE: return "The device this player reads. Auto: the Vita for 1P, then the controllers in order";
-	case CK_STICK: return "The analog stick that works as the d-pad too";
+	case CK_STICK: return "What each direction of the left and right analog stick presses";
+	case CK_SMAP_SET: return "The whole stick as the d-pad, or off. Or set each direction below";
+	case CK_SMAP_DIR: return "What this direction presses, in addition to the buttons";
 	case CK_BIND_ALL: return "Press each button in turn, from Button 1 to Start";
-	case CK_ACT: return "Confirm, then press the button to use. Left / Right: step through the buttons. Square: None (where it can be)";
+	case CK_ACT: return "Confirm, then press the button or tilt a stick. Left / Right: all keys, a whole stick too. Triangle or +: one more key";
+	case CK_ACT2: return "One more key for this action. Confirm: press another. Left / Right: all keys";
 	case CK_TURBO: return "A key that repeats a game button while it is held";
 	case CK_COMBO: return "Keys that press two keys together";
 	case CK_RESET_PORT: return "This player's buttons, analog stick, turbo and combo keys back to the defaults";
@@ -1289,6 +1434,17 @@ static void bind_begin(int all)
 	s_bind_prev = ~0u; // (pressed only after a release)
 	s_dirty = 1;
 }
+// one more key for an action: its row appears and waits for the button (cancelled: the row goes)
+static void key_add(int act)
+{
+	const int x = act_extras(act);
+	if (x >= RS12_KEY_EXTRA)
+		return;
+	prt()->keyx[act][x] = KEY_PENDING;
+	s_sel = port_row_of_act(act) + 1 + x;
+	s_changed = 1;
+	bind_begin(0);
+}
 
 // About: vertically scrolling text (empty string = blank line, starting with '#' = heading line)
 static const char *const s_about[] = {
@@ -1379,6 +1535,7 @@ static int s_keep_place, s_pop, s_pop_sel; // menu closed with SELECT+START (kee
 // double press goes to the home screen: the app lets go of the lock and the kernel helper presses PS for the system
 #define RS12_KCTRL_LOADED 0x8002D013u // taiLoadStartKernelModule: already loaded (device)
 static int s_kctrl = -1;    // kernel helper usable (module/rs12_kctrl.skprx): 1 yes, -1 no
+static int s_cpu3_hooked;   // the kernel helper's CPU3 unlock is this run's to give back
 static int s_ps_locked;     // the system's PS button handling locked by the app
 static unsigned s_ps_one, s_ps_two; // helper counts already acted on (single, double presses)
 static uint64_t s_ps_home_t; // when a double press sent the app home (lock taken again a while later)
@@ -1400,6 +1557,30 @@ static void ps_lock(int on)
 void rs12_ps_release(void)
 {
 	ps_lock(0);
+	rs12_kctrl_cpu3_release(); // (the CPU3 unlock is system wide: given back too)
+}
+void rs12_kctrl_cpu3_release(void)
+{
+	if (s_kctrl > 0 && s_cpu3_hooked) {
+		rs12KCtrlCpu3(0, NULL);
+		s_cpu3_hooked = 0;
+	}
+}
+// CPU3 for the app's threads, by the kernel helper where the code is the known one. hook 0 (already open): only looks whether the
+// open one is this helper's, left by a run that ended without its release, and takes it over
+void rs12_kctrl_cpu3(int hook)
+{
+	if (s_kctrl <= 0) {
+		RS12_LOG("cpu3: unlock not tried (no kernel helper)");
+		return;
+	}
+	unsigned int info[4] = { 0, 0, 0, 0 };
+	const int r = rs12KCtrlCpu3(hook ? 1 : -1, info);
+	s_cpu3_hooked = info[3] == 1;
+	RS12_LOG("cpu3: unlock %d (%s; NID %08x, code %08x %08x)", r,
+		!hook ? (s_cpu3_hooked ? "already open, ours taken over" : "already open, not ours") : r == 1 ? "hooked" :
+		r == 2 ? "not the known code" : r == 0 ? "not hooked" : "failed", info[0], info[1], info[2]);
+	(void)r;
 }
 // Load the kernel helper at start. Its syscall is linked into this app only if the module was loaded before the app
 // started (a call right after a first load crashed on the device), so a first load since boot restarts the app once
@@ -1407,7 +1588,7 @@ void rs12_ps_release(void)
 void rs12_kctrl_init(int restarted)
 {
 	const SceUID m = taiLoadStartKernelModule("ux0:app/RSYS00012/module/rs12_kctrl.skprx", 0, NULL, 0); // (the kernel cannot open app0:)
-	// (the module name has a version, rs12_kctrl_v4: a module of an older build may still be loaded until reboot)
+	// (the module name has a version, rs12_kctrl_v5: a module of an older build may still be loaded until reboot)
 	if (m >= 0 && !restarted) {
 		static char *const av[] = { "kctrl", NULL };
 		sceAppMgrLoadExec("app0:eboot.bin", av, NULL);
@@ -1492,6 +1673,7 @@ static int page_items(void)
 	case PAGE_DISPLAY: return D_COUNT;
 	case PAGE_CONTROLS: return ctrl_rows();
 	case PAGE_TURBO: return 4;
+	case PAGE_STICK: return STICK_PAGE_ROWS;
 	case PAGE_TOUCH: return 5;
 	case PAGE_PORT: return port_rows();
 	case PAGE_TEDIT: return 1;
@@ -1524,11 +1706,12 @@ static void page_back(void)
 	if (from == PAGE_TEDIT) {
 		go_page(PAGE_TOUCH);
 		s_sel = 2; // (Edit touch layout)
+		s_mt_wait_up = 1;
 		return;
 	}
-	if (from == PAGE_TURBO || from == PAGE_COMBO) {
+	if (from == PAGE_TURBO || from == PAGE_COMBO || from == PAGE_STICK) {
 		go_page(PAGE_PORT);
-		s_sel = port_row_of(from == PAGE_TURBO ? CK_TURBO : CK_COMBO);
+		s_sel = port_row_of(from == PAGE_TURBO ? CK_TURBO : from == PAGE_COMBO ? CK_COMBO : CK_STICK);
 		return;
 	}
 	if (from == PAGE_ANALOG || from == PAGE_TOUCH || from == PAGE_PORT) {
@@ -1568,7 +1751,19 @@ static const char *const filter[] = { "Smooth", "Sharp" };
 static const char *const border[] = { "Black", "Artwork", "Color" };
 static const char *const rotate[] = { "Auto", "Off", "Vertical L", "Vertical R" };
 static const char *const border_col[] = { "Navy", "Gray", "Maroon", "Green", "Purple", "Brick" };
-static const char *const stick[] = { "Off", "Left", "Right", "Both" };
+static const char *const stick_dir[RS12_SDIR_COUNT] = { "Up", "Down", "Left", "Right" };
+static const char *const stick_tgt[RS12_STGT_COUNT] = { "None", "Up", "Down", "Left", "Right", "Button 1", "Button 2", "Button 3",
+	"Button 4", "Button 5", "Button 6", "Coin", "Start" };
+// a stick's row: the whole stick as the d-pad, off, or directions set one by one
+static const char *stick_state(int st)
+{
+	int dpad = 1, off = 1;
+	for (int d = 0; d < RS12_SDIR_COUNT; d++) {
+		dpad &= prt()->smap[st][d] == RS12_STGT_UP + d;
+		off &= prt()->smap[st][d] == RS12_STGT_NONE;
+	}
+	return dpad ? "D-pad" : off ? "Off" : "Custom";
+}
 static const char *const turbo_speed[] = { "Fast (15/s)", "Medium (10/s)", "Slow (7.5/s)" };
 
 static void change(int dir);
@@ -1576,7 +1771,7 @@ static void engine_pick(int engine);
 static int engine_list(int *e);
 // an item with several values opens a window listing them all on the confirm button. The values of the selected item:
 // names, count (0 = not such an item), current index
-#define MAX_CHOICES 16
+#define MAX_CHOICES 24
 enum { CH_TEXT, CH_KEYS, CH_COMBO }; // how the choice window draws the values: names, button icons, key pairs
 // the combo page's window: -1 = its first step (None or the first key), else the first key picked (the second step)
 static int s_combo_first = -1, s_pop_keep;
@@ -1618,14 +1813,13 @@ static int item_choices(const char **out, int *cur, const char **title)
 		int key, func;
 		if (row_key(k, act, &key, &func)) {
 			// buttons 2-6, the turbo key and the gun / wheel keys can also be None
-			const int with_none = !(k == CK_ACT && (act == RS12_ACT_B1 || act >= RS12_ACT_COIN));
+			const int with_none = !(k == CK_ACT2 || (k == CK_ACT && (act == RS12_ACT_B1 || act >= RS12_ACT_COIN)));
 			n = RS12_KEY_COUNT + with_none;
 			for (int i = 0; i < n; i++)
 				out[i] = rs12_key_name(i);
 			*cur = key;
 			s_choice_kind = CH_KEYS;
-			*title = k == CK_ACT ? act_name(act) : k == CK_TURBO_KEY ? "Turbo key" : k == CK_GUN_FIRE ? "Gun trigger" :
-				k == CK_GUN_SENSOR ? "Gun scope sensor" : k == CK_GAS ? "Gas pedal" : "Brake pedal";
+			*title = row_key_name(k, act);
 		} else if (k == CK_ENGINE) {
 			int e[RE_PAD_ENGINE_COUNT];
 			n = engine_list(e);
@@ -1656,12 +1850,15 @@ static int item_choices(const char **out, int *cur, const char **title)
 				out[i] = turbo_speed[i];
 			*cur = prt()->turbo_speed;
 			*title = "Turbo speed";
-		} else if (k == CK_STICK) {
-			n = RS12_STICK_COUNT;
+		} else if (k == CK_SMAP_DIR) {
+			static char tb[32];
+			const int st = act / STICK_ROWS, d = act % STICK_ROWS - 1;
+			n = RS12_STGT_COUNT;
 			for (int i = 0; i < n; i++)
-				out[i] = stick[i];
-			*cur = prt()->stick;
-			*title = "Analog stick";
+				out[i] = stick_tgt[i];
+			*cur = prt()->smap[st][d];
+			snprintf(tb, sizeof(tb), "%s stick %s", st ? "Right" : "Left", stick_dir[d]);
+			*title = tb;
 		} else if (k == CK_GUN_SENS) {
 			n = 10;
 			for (int i = 0; i < n; i++) {
@@ -1782,11 +1979,15 @@ static void change(int dir)
 	case PAGE_CONTROLS:
 	case PAGE_TURBO:
 	case PAGE_ANALOG:
+	case PAGE_STICK:
 	case PAGE_TOUCH:
 	case PAGE_PORT: {
 		int act;
 		const int k = row_kind(s_sel, &act);
-		if (k == CK_ACT && act >= 0) // buttons 2-6 can also be None
+		if (k == CK_ACT2) {
+			int *v = &prt()->keyx[ACT2_ACT(act)][ACT2_X(act)];
+			*v = wrap(*v + dir, RS12_KEY_COUNT);
+		} else if (k == CK_ACT && act >= 0) // buttons 2-6 can also be None
 			prt()->keymap[act] = wrap(prt()->keymap[act] + dir, act == RS12_ACT_B1 || act >= RS12_ACT_COIN ? RS12_KEY_COUNT
 				: RS12_KEY_COUNT + 1);
 		else if (k == CK_ENGINE)
@@ -1801,8 +2002,12 @@ static void change(int dir)
 			prt()->turbo_btn = wrap(prt()->turbo_btn - 1 + dir, ctrl_buttons()) + 1;
 		else if (k == CK_TURBO_SPEED)
 			prt()->turbo_speed = wrap(prt()->turbo_speed + dir, RS12_TURBO_SPEED_COUNT);
-		else if (k == CK_STICK)
-			prt()->stick = wrap(prt()->stick + dir, RS12_STICK_COUNT);
+		else if (k == CK_SMAP_SET)
+			stick_preset(prt(), act / STICK_ROWS, strcmp(stick_state(act / STICK_ROWS), "D-pad"));
+		else if (k == CK_SMAP_DIR) {
+			int *v = &prt()->smap[act / STICK_ROWS][act % STICK_ROWS - 1];
+			*v = wrap(*v + dir, RS12_STGT_COUNT);
+		}
 		else if (k == CK_AIM_STICK)
 			g_set.aim_stick = wrap(g_set.aim_stick + dir, RS12_AIM_STICK_COUNT);
 		else if (k == CK_AIM_MODE)
@@ -2199,6 +2404,7 @@ static rs12_menu_result confirm(void)
 	case PAGE_CONTROLS:
 	case PAGE_TURBO:
 	case PAGE_ANALOG:
+	case PAGE_STICK:
 	case PAGE_TOUCH:
 	case PAGE_PORT: {
 		int act;
@@ -2239,6 +2445,7 @@ static rs12_menu_result confirm(void)
 		else if (k == CK_BACK || k == CK_ABACK) back_out();
 		else if (k == CK_TURBO) go_page(PAGE_TURBO);
 		else if (k == CK_COMBO) go_page(PAGE_COMBO);
+		else if (k == CK_STICK) go_page(PAGE_STICK);
 		else if (k == CK_ANALOG) {
 			s_kp = 0; // (1P's: its keys are checked for duplicates)
 			go_page(PAGE_ANALOG);
@@ -2270,6 +2477,263 @@ static rs12_menu_result confirm(void)
 	return RS12_MENU_STAY;
 }
 
+// the touch panel drops a report now and then near its top and bottom edges: there a finger counts as gone 60 ms after the
+// last one (elsewhere at once: a tap acts when it leaves). s_touch_held: this read is such a kept point, not a real one
+static int s_touch_held;
+static int ui_touch(int *x, int *y)
+{
+	static uint64_t seen;
+	static int lx, ly;
+	const int n = rs12_touch_read(x, y);
+	const uint64_t now = rs12_time_us();
+	s_touch_held = 0;
+	if (n) {
+		seen = now;
+		lx = x[0];
+		ly = y[0];
+		return n;
+	}
+	if (seen && (ly < 40 || ly >= 490) && now - seen < 60000) {
+		x[0] = lx;
+		y[0] = ly;
+		s_touch_held = 1;
+		return 1;
+	}
+	return 0;
+}
+// a flick's speed at the finger's end, per frame: faster flicks go on more than in proportion
+static float flick_boost(float v)
+{
+	const float a = fabsf(v);
+	return v * (1.0f + (a > 1.5f ? 1.5f : a) * 1.2f);
+}
+
+// the touch effect in the game list and the menus: a soft light and a thin ring of the theme's colour under the finger,
+// fading slowly when it leaves. Light added to the picture, from two small textures scaled by the video output: nothing is
+// drawn again on the canvases
+#define FX_GLOW 64
+#define FX_RING 128
+#define FX_HOLD 10 // frames
+#define FX_FADE 20
+static RS12Tex *s_fx_glow, *s_fx_ring;
+// a texture of light: f = strength by distance from the centre (0-1), white = how far towards white, by distance too
+static void fx_fill(RS12Tex *x, int size, uint32_t rgb, float (*f)(float), float (*white)(float))
+{
+	const unsigned r = rgb & 0xFF, g = rgb >> 8 & 0xFF, b = rgb >> 16 & 0xFF;
+	for (int y0 = 0; y0 < size; y0++)
+		for (int x0 = 0; x0 < size; x0++) {
+			const float dx = (x0 + 0.5f) / (size / 2) - 1.0f, dy = (y0 + 0.5f) / (size / 2) - 1.0f, d = sqrtf(dx * dx + dy * dy);
+			const float a = d < 1.0f ? f(d) : 0.0f, w = white(d);
+			const float cr = r + (255 - r) * w, cg = g + (255 - g) * w, cb = b + (255 - b) * w;
+			x->data[(size_t)y0 * x->stride + x0] = (uint32_t)(cr * a) | (uint32_t)(cg * a) << 8 | (uint32_t)(cb * a) << 16 | (uint32_t)(255 * a) << 24;
+		}
+}
+static float fx_glow_f(float d) // (no edge: a blur, brightest in the middle)
+{
+	const float a = 1.0f - d * d;
+	return a * a * a;
+}
+static float fx_glow_w(float d) { return d < 0.5f ? 0.55f * (1.0f - 2.0f * d) : 0.0f; }
+static float fx_ring_f(float d) // (a thin line, soft on both sides, and a faint trail inside it)
+{
+	float a = 1.0f - fabsf(d - 0.9f) / 0.07f;
+	a = a < 0.0f ? 0.0f : a * a * (3.0f - 2.0f * a);
+	const float tr = d < 0.9f ? 0.16f * d * d * d : 0.0f;
+	return a > tr ? a : tr;
+}
+static float fx_ring_w(float d) { (void)d; return 0.35f; }
+static void fx_make(void)
+{
+	static int gen = -1;
+	theme();
+	if (gen == s_theme_gen)
+		return;
+	if (!s_fx_glow)
+		s_fx_glow = rs12_video_tex(FX_GLOW, FX_GLOW);
+	if (!s_fx_ring)
+		s_fx_ring = rs12_video_tex(FX_RING, FX_RING);
+	if (!s_fx_glow || !s_fx_ring)
+		return;
+	gen = s_theme_gen;
+	fx_fill(s_fx_glow, FX_GLOW, COL_SEL, fx_glow_f, fx_glow_w);
+	fx_fill(s_fx_ring, FX_RING, COL_SEL, fx_ring_f, fx_ring_w);
+}
+static float ease_out(float t) { return t * (2.0f - t); }
+// once a frame, with the touches now
+static void touch_fx(int tn, int x, int y)
+{
+	static int down, age, fade;
+	static float fx, fy;
+	fx_make();
+	if (tn) {
+		if (!down)
+			age = 0;
+		down = 1;
+		fade = 0;
+		fx = (float)x;
+		fy = (float)y;
+		if (age < FX_HOLD)
+			age++;
+		const float e = ease_out((float)age / FX_HOLD);
+		rs12_video_touch_fx(0, s_fx_glow, fx, fy, 24.0f + 14.0f * e, 0.3f + 0.3f * e);
+		rs12_video_touch_fx(1, s_fx_ring, fx, fy, 19.0f + 10.0f * e, 0.45f * e);
+		return;
+	}
+	if (down) {
+		down = 0;
+		fade = 1;
+	}
+	if (!fade)
+		return;
+	const float e = ease_out((float)age / FX_HOLD), l = 1.0f - (float)fade / FX_FADE; // (as it was, only fainter)
+	rs12_video_touch_fx(0, s_fx_glow, fx, fy, 24.0f + 14.0f * e, (0.3f + 0.3f * e) * l);
+	rs12_video_touch_fx(1, s_fx_ring, fx, fy, 19.0f + 10.0f * e, 0.45f * e * l);
+	fade = fade < FX_FADE ? fade + 1 : 0;
+}
+
+// the options' touch: the last paint's panel, rows (text baselines) and choice window; s_mdrag: the rows scrolled by a
+// drag (the selected row may leave the screen until a button)
+#define MT_ROWS 128
+static float s_mscr, s_mtgt; // menu rows scroll (px): drawn, target
+static int s_mt_px, s_mt_py, s_mt_h, s_mt_ra, s_mt_rb, s_mt_lh, s_mt_n, s_mt_ty[MT_ROWS];
+static int s_mt_wx, s_mt_wy, s_mt_ww, s_mt_wh, s_mt_plh, s_mt_nc;
+static int s_mdrag;
+static float s_mvel; // the rows' flick: px a frame
+static uint64_t s_mt_block; // the finger that opened them is not read until this time
+static int s_touch_add = -1; // a key row's Add was tapped: the action
+#define ROW_BTN_TOUCH 110 // (the touch area of a key row's button, from the row's end)
+// the About page by touch: px the text moved (positive: down the text), a line for every ABOUT_LH; 0 at an end (it stops)
+static float s_about_px;
+static int about_move(float d)
+{
+	const int max = ABOUT_LINES > ABOUT_VISIBLE ? ABOUT_LINES - ABOUT_VISIBLE : 0;
+	s_about_px += d;
+	while (s_about_px >= ABOUT_LH && s_about_scroll < max) {
+		s_about_scroll++;
+		s_about_px -= ABOUT_LH;
+		s_dirty = 1;
+	}
+	while (s_about_px <= -ABOUT_LH && s_about_scroll > 0) {
+		s_about_scroll--;
+		s_about_px += ABOUT_LH;
+		s_dirty = 1;
+	}
+	if ((s_about_px > 0 && s_about_scroll >= max) || (s_about_px < 0 && s_about_scroll <= 0)) {
+		s_about_px = 0; // (no remainder past an end)
+		return 0;
+	}
+	return 1;
+}
+// a tap over the options: SCE_CTRL bits it stands for (and the row it selects); a drag scrolls a long page
+static uint32_t menu_touch(int o_ok)
+{
+	static int down, x0, y0, last, moved, stopped;
+	int tx[6], ty[6];
+	const int tn = ui_touch(tx, ty);
+	const uint32_t ok = o_ok ? SCE_CTRL_CIRCLE : SCE_CTRL_CROSS, back = o_ok ? SCE_CTRL_CROSS : SCE_CTRL_CIRCLE;
+	if (rs12_time_us() < s_mt_block) {
+		down = 0;
+		return 0;
+	}
+	if (s_mt_wait_up) { // (Done goes on the press: the same finger is still there)
+		down = 0;
+		s_mt_wait_up = tn != 0;
+		return 0;
+	}
+	if (tn) {
+		if (!down) {
+			down = 1;
+			x0 = tx[0];
+			y0 = last = ty[0];
+			moved = 0;
+			stopped = s_mvel != 0.0f; // (a touch that stops the rows is not a tap)
+			s_mvel = 0;
+			s_about_px = 0;
+		} else {
+			if (abs(ty[0] - y0) > 12 || abs(tx[0] - x0) > 12)
+				moved = 1;
+			if (moved && !s_pop && x0 >= s_mt_px && x0 < s_mt_px + PANEL_W && y0 >= s_mt_ra && y0 < s_mt_rb) {
+				const float d = (float)(ty[0] - last);
+				if (s_page == PAGE_ABOUT) // (the text follows the finger by whole lines)
+					about_move(-d);
+				else {
+					s_mtgt -= d;
+					s_mdrag = 1;
+					s_dirty = 1;
+				}
+				if (!s_touch_held)
+					s_mvel = s_mvel * 0.5f - d * 0.5f;
+			}
+			last = ty[0];
+		}
+		return 0;
+	}
+	if (!down) {
+		if (s_mvel != 0.0f) { // after a flick the rows go on, slowing down
+			if (s_page == PAGE_ABOUT) {
+				if (!about_move(s_mvel))
+					s_mvel = 0; // (at an end)
+			} else {
+				s_mtgt += s_mvel;
+				s_dirty = 1;
+			}
+			s_mvel *= 0.95f;
+			if (fabsf(s_mvel) < 0.6f)
+				s_mvel = 0;
+		}
+		return 0;
+	}
+	down = 0;
+	if (moved) {
+		s_mvel = flick_boost(s_mvel / LINE_H) * LINE_H;
+		return 0;
+	}
+	if (stopped)
+		return 0;
+	s_dirty = 1;
+	if (s_pop) { // the choice window: a value picks it, outside closes
+		if (x0 < s_mt_wx || x0 >= s_mt_wx + s_mt_ww || y0 < s_mt_wy || y0 >= s_mt_wy + s_mt_wh)
+			return back;
+		const int i = s_mt_plh > 0 ? (y0 - (s_mt_wy + 60)) / s_mt_plh : -1;
+		if (y0 >= s_mt_wy + 60 && i >= 0 && i < s_mt_nc) {
+			s_pop_sel = i;
+			return ok;
+		}
+		return 0;
+	}
+	if (x0 < s_mt_px || x0 >= s_mt_px + PANEL_W || y0 < s_mt_py || y0 >= s_mt_py + s_mt_h)
+		return back; // (outside the panel: back, as the back button)
+	if (s_page == PAGE_ABOUT)
+		return back;
+	if (y0 < s_mt_ra || y0 >= s_mt_rb)
+		return 0;
+	for (int i = 0; i < s_mt_n && i < MT_ROWS; i++) {
+		const int top = s_mt_ty[i] - 7 - s_mt_lh / 2;
+		if (y0 >= top && y0 < top + s_mt_lh) {
+			s_mdrag = 0;
+			int a;
+			const int rk = s_page == PAGE_PORT && x0 >= s_mt_px + PANEL_W - ROW_BTN_TOUCH ? row_kind(i, &a) : -1;
+			if (rk == CK_ACT && act_extras(a) < RS12_KEY_EXTRA) { // (the Add button at the row's right)
+				s_sel = i;
+				s_touch_add = a;
+				return 0;
+			}
+			if (rk == CK_ACT2) { // (its Delete)
+				act_remove(ACT2_ACT(a), ACT2_X(a));
+				s_sel = port_row_of_act(ACT2_ACT(a));
+				s_changed = 1;
+				return 0;
+			}
+			if (i == s_sel)
+				return ok; // (the selected row again: as the confirm button)
+			s_sel = i;
+			s_reset_armed = 0;
+			return 0;
+		}
+	}
+	return 0;
+}
+
 rs12_menu_result rs12_menu_update(uint32_t buttons)
 {
 	const int ps_closed = ps_poll();
@@ -2280,11 +2744,29 @@ rs12_menu_result rs12_menu_update(uint32_t buttons)
 	s_prev_buttons = buttons;
 	if (pressed)
 		s_dirty = 1;
+	if (pressed) {
+		s_mdrag = 0; // (the buttons bring the selected row back on screen)
+		s_mvel = 0;
+	}
+	if (s_page != PAGE_TEDIT && !s_bind && !s_vc_ask)
+		pressed |= menu_touch(g_set.confirm == RS12_CONFIRM_CIRCLE);
+	if (s_touch_add >= 0) {
+		const int a = s_touch_add;
+		s_touch_add = -1;
+		key_add(a);
+		return RS12_MENU_STAY;
+	}
+	if (!s_list_mode) { // (the list's loop has its own: one tick a frame)
+		int fxx[6], fxy[6];
+		const int fxn = ui_touch(fxx, fxy);
+		touch_fx(fxn, fxx[0], fxy[0]);
+	}
 	if (re_pad_changed()) { // a controller came or went: the Port pages and the Device list show them, the whole panel again
 		s_dirty = 1;
 		s_drawn_h = 0;
 		s_pad_redraw = 1; // (the game list options draw again only when told)
-		if (!re_pad_player_shown(s_kp) && (s_page == PAGE_PORT || s_page == PAGE_TURBO || s_page == PAGE_COMBO)) {
+		if (!re_pad_player_shown(s_kp) && (s_page == PAGE_PORT || s_page == PAGE_TURBO || s_page == PAGE_COMBO ||
+			s_page == PAGE_STICK)) {
 			// the device of this port went away (its row is gone): back to Controls
 			s_pop = s_bind = 0;
 			go_page(PAGE_CONTROLS);
@@ -2332,23 +2814,29 @@ rs12_menu_result rs12_menu_update(uint32_t buttons)
 		int act, key = -1, cancel = ps_closed || !CTRL_PAGE;
 		const int k = row_kind(s_sel, &act);
 		uint32_t keys = 0;
-		for (int i = 0; i < RS12_KEY_COUNT; i++)
+		for (int i = 0; i < RS12_KEY_LANY; i++) // (a whole stick is not a press)
 			keys |= rs12_key_code(i);
 		// a player's own page: its own device alone (another controller's buttons are not taken). Keys are looked for
 		// from the last: a controller's L2 / R2 is also L / R in the menus, the key is L2 / R2
 		uint32_t bb = buttons, bp = pressed;
+		SceCtrlData pd;
 		if (s_page == PAGE_PORT || s_page == PAGE_TURBO) {
-			SceCtrlData pd;
 			re_pad_read(s_kp, &pd);
-			bb = pd.buttons;
+			bb = (pd.buttons & ~RS12_STICK_BITS) | rs12_stick_bits(pd.lx, pd.ly, pd.rx, pd.ry);
 			bp = bb & ~s_bind_prev;
 			s_bind_prev = bb;
+		} else {
+			re_pad_read(0, &pd);
+			const uint32_t sb = rs12_stick_bits(pd.lx, pd.ly, pd.rx, pd.ry);
+			bb = buttons | sb;
+			bp = pressed | (sb & ~s_bind_prev);
+			s_bind_prev = sb;
 		}
 		if (!s_bind_ready) {
 			if (!((buttons | bb) & (keys | REPEAT_KEYS)))
 				s_bind_ready = 1;
 		} else {
-			for (int i = RS12_KEY_COUNT - 1; i >= 0 && key < 0; i--)
+			for (int i = RS12_KEY_LANY - 1; i >= 0 && key < 0; i--)
 				if (bp & rs12_key_code(i))
 					key = i;
 			if (key < 0 && ((pressed | bp) & REPEAT_KEYS))
@@ -2364,13 +2852,21 @@ rs12_menu_result rs12_menu_update(uint32_t buttons)
 			s_changed = 1;
 			warn_clash(key, cf);
 			if (s_bind_all && k == CK_ACT && act != RS12_ACT_START) { // Set all controls: the next key row
+				int a2;
 				s_sel++;
+				while (row_kind(s_sel, &a2) == CK_ACT2)
+					s_sel++;
 				s_bind_ready = 0;
 				s_bind_t = rs12_time_us();
 			} else
 				s_bind = 0;
 			s_dirty = 1;
 		} else if (cancel) {
+			if (k == CK_ACT2 && s_page == PAGE_PORT) { // a more key not given (or not given again): it goes
+				act_remove(ACT2_ACT(act), ACT2_X(act));
+				s_sel = port_row_of_act(ACT2_ACT(act));
+				s_changed = 1;
+			}
 			s_bind = 0;
 			s_dirty = 1;
 		}
@@ -2420,10 +2916,25 @@ rs12_menu_result rs12_menu_update(uint32_t buttons)
 			s_dirty = 1;
 			return RS12_MENU_STAY;
 		}
+		if ((pressed & SCE_CTRL_TRIANGLE) && s_page == PAGE_PORT && !ps_closed) { // a key row: one more key
+			int act;
+			const int k = row_kind(s_sel, &act);
+			if (k == CK_ACT) {
+				key_add(act);
+				return RS12_MENU_STAY;
+			}
+			if (k == CK_ACT2) { // (a more key: Triangle takes it away again)
+				act_remove(ACT2_ACT(act), ACT2_X(act));
+				s_sel = port_row_of_act(ACT2_ACT(act));
+				s_changed = 1;
+				s_dirty = 1;
+				return RS12_MENU_STAY;
+			}
+		}
 		if ((pressed & SCE_CTRL_SQUARE) && CTRL_PAGE && !ps_closed) { // a key row that can be none: Square sets None
 			int act, ck, cf;
 			const int k = row_kind(s_sel, &act);
-			if (row_key(k, act, &ck, &cf) && (k != CK_ACT || (act != RS12_ACT_B1 && act < RS12_ACT_COIN))) {
+			if (row_key(k, act, &ck, &cf) && k != CK_ACT2 && (k != CK_ACT || (act != RS12_ACT_B1 && act < RS12_ACT_COIN))) {
 				row_set_key(k, act, RS12_KEY_NONE);
 				s_changed = 1;
 				s_dirty = 1;
@@ -2627,6 +3138,31 @@ static int combo_width(int mask) // (draw_combo's width without drawing)
 	return w + (n > 1 ? ui_text_width(1.0f, "+") + 10 : 0);
 }
 
+// a key row's button at its right. Selected row: no box of its own (the focus bar is the box), Triangle and the word in the
+// row's colours. Others: a small soft key with a + or x, no outline
+static void row_button(UiCanvas *c, int px, int ty, int selected, int del)
+{
+	const int right = px + PANEL_W - 36;
+	if (selected) {
+		const char *word = del ? "Delete" : "Add";
+		const int ww = ui_text_width(0.85f, word), x = right - ww - 26;
+		draw_key(c, x, ty - 7, ty, RS12_KEY_TRIANGLE, COL_SEL);
+		ui_text(c, right - ww, ty, COL_SEL, 0.85f, word);
+	} else {
+		const int cx = right - 14, cy = ty - 7;
+		rrect(c, cx - 15, cy - 13, 30, 26, 6, UI_RGBA(0xFF, 0xFF, 0xFF, 0x20));
+		if (del)
+			for (int k = -5; k < 5; k++) {
+				ui_rect(c, cx + k, cy + k, 2, 1, COL_ITEM);
+				ui_rect(c, cx - k - 1, cy + k, 2, 1, COL_ITEM);
+			}
+		else {
+			ui_rect(c, cx - 6, cy - 1, 12, 2, COL_ITEM);
+			ui_rect(c, cx - 1, cy - 6, 2, 12, COL_ITEM);
+		}
+	}
+}
+
 // clash: the key also does something else in this game (shown in the warning colour with "!")
 static void item_key_w(UiCanvas *c, int px, int ty, int i, int sel, const char *name, int key, int clash)
 {
@@ -2647,7 +3183,36 @@ static void item_key(UiCanvas *c, int px, int ty, int i, int sel, const char *na
 }
 
 // one line of text (size 0.8): symbol chars (0x10-0x13) drawn as button icons
-static void text_keys(UiCanvas *c, int x, int ty, uint32_t col, const char *s)
+// its width, as drawn below
+static int keys_width(const char *s)
+{
+	char run[128];
+	int k = 0, w = 0;
+	for (const char *p = s;; p++) {
+		const unsigned char ch = (unsigned char)*p;
+		if ((ch >= 0x10 && ch <= 0x13) || !ch || k == (int)sizeof(run) - 1) {
+			run[k] = 0;
+			if (k)
+				w += ui_text_width(0.8f, run);
+			k = 0;
+			if (!ch)
+				return w;
+			if (ch >= 0x10 && ch <= 0x13) {
+				w += 22;
+				continue;
+			}
+		}
+		run[k++] = (char)ch;
+	}
+}
+// a footer button: dark glass with a thin light edge
+static void foot_button(UiCanvas *c, int x, int y, int w, int h)
+{
+	rrect(c, x, y, w, h, 9, UI_RGBA(0, 0, 0, 0x48));
+	rrect(c, x + 1, y + 1, w - 2, h / 2 - 1, 8, UI_RGBA(0xFF, 0xFF, 0xFF, 0x0C));
+	rrect_outline(c, x, y, w, h, 9, 1, UI_RGBA(0xFF, 0xFF, 0xFF, 0x38));
+}
+static int text_keys(UiCanvas *c, int x, int ty, uint32_t col, const char *s) // (the x after it)
 {
 	char run[128];
 	int k = 0;
@@ -2670,11 +3235,11 @@ static void text_keys(UiCanvas *c, int x, int ty, uint32_t col, const char *s)
 		}
 		run[k++] = (char)ch;
 	}
+	return x;
 }
 
 // Draw the menu panel to the canvas (caller uploads). overlay = over the game list (the dimmed list kept in s_under)
 static int s_paint_x0, s_paint_y0, s_paint_x1, s_paint_y1;
-static float s_mscr, s_mtgt; // menu rows scroll (px): drawn, target
 static const uint32_t *s_under; // game list options: the dimmed list under the window (NULL: just drawn in full)
 static int menu_anim(void) { return s_mscr != s_mtgt || s_help_scroll; } // (the menu is still moving: draw again)
 static void tedit_paint(UiCanvas *c);
@@ -2709,7 +3274,7 @@ static void menu_paint(UiCanvas *c, int overlay)
 		const int sy = s_sel * lh + (s_page == PAGE_MAIN && !s_list_mode && s_sel < n ? gap_at[s_sel] : 0);
 		if (s_page == PAGE_ABOUT)
 			s_mtgt = 0;
-		else {
+		else if (!s_mdrag) {
 			if (sy - lh < s_mtgt)
 				s_mtgt = (float)(sy - lh);
 			if (sy + 2 * lh > s_mtgt + view)
@@ -2721,6 +3286,8 @@ static void menu_paint(UiCanvas *c, int overlay)
 			s_mscr = s_mtgt; // another page: no animation
 		last_page = s_page;
 		last_n = n;
+		if (s_mdrag)
+			s_mscr = s_mtgt; // (the rows follow the finger)
 		s_mscr += (s_mtgt - s_mscr) * 0.3f;
 		if (fabsf(s_mtgt - s_mscr) < 0.5f)
 			s_mscr = s_mtgt;
@@ -2768,6 +3335,10 @@ static void menu_paint(UiCanvas *c, int overlay)
 	case PAGE_TURBO:
 		title = s_kp ? "2P TURBO" : "1P TURBO";
 		foot = "Hold the turbo key: the turbo button repeats";
+		break;
+	case PAGE_STICK:
+		title = s_kp ? "2P ANALOG STICKS" : "1P ANALOG STICKS";
+		foot = "Each stick is set on its own";
 		break;
 	case PAGE_TOUCH:
 		title = "TOUCH CONTROLS";
@@ -2828,7 +3399,8 @@ static void menu_paint(UiCanvas *c, int overlay)
 	} else if (s_page == PAGE_PORT || s_page == PAGE_TURBO || s_page == PAGE_ANALOG) {
 		int act, ck, cf;
 		if (row_key(row_kind(s_sel, &act), act, &ck, &cf)) {
-			snprintf(foot_buf, sizeof(foot_buf), "%s: press a button to set it   " G_SQU ": none   Left/Right: change", ok_name);
+			snprintf(foot_buf, sizeof(foot_buf), "%s: press a button to set it   " G_SQU ": none   Left/Right: change%s", ok_name,
+				s_page == PAGE_PORT ? "   " G_TRI ": one more" : "");
 			foot = foot_buf;
 		}
 	}
@@ -2845,6 +3417,16 @@ static void menu_paint(UiCanvas *c, int overlay)
 	}
 
 	const int ra = py + TITLE_H, rb = ra + view, scr = (int)floorf(s_mscr + 0.5f);
+	s_mt_px = px;
+	s_mt_py = py;
+	s_mt_h = h;
+	s_mt_ra = ra;
+	s_mt_rb = rb;
+	s_mt_lh = lh;
+	s_mt_n = n;
+	s_mt_nc = 0;
+	for (int i = 0; i < n && i < MT_ROWS; i++)
+		s_mt_ty[i] = ra + i * lh + (s_page == PAGE_MAIN && !s_list_mode ? gap_at[i] : 0) - scr + lh / 2 + 7;
 	ui_clip_y(c, ra, rb);
 	s_focus_cy0 = ra;
 	s_focus_cy1 = rb;
@@ -2888,6 +3470,7 @@ static void menu_paint(UiCanvas *c, int overlay)
 		case PAGE_CONTROLS:
 		case PAGE_TURBO:
 		case PAGE_ANALOG:
+		case PAGE_STICK:
 		case PAGE_TOUCH:
 		case PAGE_PORT: {
 			int act, rk, rf;
@@ -2895,9 +3478,15 @@ static void menu_paint(UiCanvas *c, int overlay)
 			const int is_key = row_key(k, act, &rk, &rf);
 			const int clash = is_key && key_clash(rk, rf) != NULL;
 			if (is_key && s_bind && i == s_sel)
-				item(c, px, ty, i, s_sel, row_key_name(k, act), "Press a button...");
-			else if (k == CK_ACT)
+				item(c, px, ty, i, s_sel, k == CK_ACT2 ? "    +" : row_key_name(k, act), "Press a button...");
+			else if (k == CK_ACT) {
 				item_key_w(c, px, ty, i, s_sel, act_name(act), prt()->keymap[act], clash);
+				if (act_extras(act) < RS12_KEY_EXTRA)
+					row_button(c, px, ty, i == s_sel, 0);
+			} else if (k == CK_ACT2) {
+				item_key_w(c, px, ty, i, s_sel, "    +", prt()->keyx[ACT2_ACT(act)][ACT2_X(act)], clash);
+				row_button(c, px, ty, i == s_sel, 1);
+			}
 			else if (k == CK_PORT1 || k == CK_PORT2) {
 				char pbuf[48], lbuf[24];
 				snprintf(lbuf, sizeof(lbuf), "%dP Controller  >", k == CK_PORT2 ? 2 : 1);
@@ -2940,7 +3529,19 @@ static void menu_paint(UiCanvas *c, int overlay)
 			} else if (k == CK_TURBO_SPEED)
 				item(c, px, ty, i, s_sel, "Turbo speed", turbo_speed[prt()->turbo_speed]);
 			else if (k == CK_STICK)
-				item(c, px, ty, i, s_sel, "Analog stick to d-pad", stick[prt()->stick]);
+				item(c, px, ty, i, s_sel, "Analog sticks  >", NULL);
+			else if (k == CK_SMAP_SET)
+				item(c, px, ty, i, s_sel, act / STICK_ROWS ? "Right stick" : "Left stick", stick_state(act / STICK_ROWS));
+			else if (k == CK_SMAP_DIR) {
+				char sb[24];
+				const int st = act / STICK_ROWS, d = act % STICK_ROWS - 1;
+				const char *v = stick_tgt[prt()->smap[st][d]];
+				for (int a = 0; a < RS12_ACT_COUNT; a++) // (set as a key on the player's page: that wins)
+					if (rs12_act_bits(prt(), a) & rs12_key_code(RS12_KEY_LUP + st * RS12_SDIR_COUNT + d))
+						v = act_name(a);
+				snprintf(sb, sizeof(sb), "    %s", stick_dir[d]);
+				item(c, px, ty, i, s_sel, sb, v);
+			}
 			else if (k == CK_AIM_STICK)
 				item(c, px, ty, i, s_sel, "Gun stick", g_set.aim_stick == RS12_AIM_RIGHT ? "Right" : "Left");
 			else if (k == CK_AIM_MODE)
@@ -3085,6 +3686,12 @@ static void menu_paint(UiCanvas *c, int overlay)
 			// rows of LINE_H; many values (the combo pairs) get shorter rows so the window fits the screen
 			const int plh = 64 + nc * LINE_H + 12 <= SCREEN_H - 24 ? LINE_H : (SCREEN_H - 24 - 76) / nc;
 			const int ww = 380, wh = 64 + nc * plh + 12, wx = (SCREEN_W - ww) / 2, wy = (SCREEN_H - wh) / 2;
+			s_mt_wx = wx;
+			s_mt_wy = wy;
+			s_mt_ww = ww;
+			s_mt_wh = wh;
+			s_mt_plh = plh;
+			s_mt_nc = nc;
 			if (wy - 8 < s_paint_y0) s_paint_y0 = wy - 8;
 			if (wy + wh + 16 > s_paint_y1) s_paint_y1 = wy + wh + 16;
 			ui_rect(c, px, py, PANEL_W, h, UI_RGBA(0x00, 0x00, 0x00, 0x80)); // dim the panel under it
@@ -3289,7 +3896,8 @@ void rs12_menu_selftest(void)
 		{ PAGE_DISPLAY, 1, 1, "display_pop" }, { PAGE_CONTROLS, 0, 0, "controls" }, { PAGE_PORT, 13, 0, "controls_end" },
 		{ PAGE_TURBO, 0, 1, "turbo_pop" }, { PAGE_COMBO, 4, 0, "combo" }, { PAGE_COMBO, 4, 1, "combo_list" },
 		{ PAGE_ABOUT, 0, 0, "about" }, { PAGE_PORT, 0, 0, "port1" }, { PAGE_PORT, 0, 1, "port1_pop" },
-		{ PAGE_PORT, 4, 0, "port2" },
+		{ PAGE_PORT, 4, 0, "port2" }, { PAGE_STICK, 0, 0, "sticks" }, { PAGE_STICK, 7, 1, "sticks_pop" },
+		{ PAGE_PORT, 3, 1, "keys_pop" },
 	};
 	char p[96];
 	// states page: the first used slot (if any)
@@ -3645,8 +4253,19 @@ static int gl_playable(int i) { return s_gl_present[i]; }
 static const char *const s_gl_filter_name[RS12_LIST_FILTER_COUNT] = { "Playable", "All", "Favorites" };
 
 // games visible under the current filter
+static char s_search[32]; // the list's search (set name or title), "": none
+static int contains_nocase(const char *h, const char *n)
+{
+	const size_t ln = strlen(n);
+	for (; *h; h++)
+		if (!strncasecmp(h, n, ln))
+			return 1;
+	return 0;
+}
 static int gl_visible(int i)
 {
+	if (s_search[0] && !contains_nocase(s_gl[i]->name, s_search) && !contains_nocase(s_gl[i]->title, s_search))
+		return 0;
 	if (g_set.list_filter == RS12_LIST_ALL)
 		return 1;
 	if (g_set.list_filter == RS12_LIST_FAVORITES)
@@ -3655,6 +4274,9 @@ static int gl_visible(int i)
 }
 
 static int s_gl_tabs[TIER_COUNT];
+static int s_tab_x0[TIER_COUNT], s_tab_x1[TIER_COUNT]; // the type tabs on the screen (touch)
+static int s_ft_n, s_ft_x0[5], s_ft_x1[5]; // the footer's buttons on the screen (touch), and their pad keys (0: About)
+static uint32_t s_ft_key[5];
 static int s_gl_ntabs, s_gl_tab, s_gl_nvis;
 
 // Rebuild tabs from games matching the filter and move to the tab/position of want (list index, may be -1). Indices of the current tab go in idx
@@ -3794,16 +4416,62 @@ static void gl_scrollbar(UiCanvas *c, int n, float scr, float rows_f, int la, in
 	rrect(c, tx, by, 5, bh, 2, COL_THUMB);
 }
 
-// the list's header: the app name in its colours, the version, the position in the list, the filter with its count
+// the battery in the header: the charge (0..100) | 0x100 while charging, -1 with none (PS TV, or a value out of range);
+// read at most once a second
+static int s_bat = -1;
+static int bat_poll(void)
+{
+	static uint64_t t;
+	static int read;
+	const uint64_t now = rs12_time_us();
+	if (read && now - t < 1000000)
+		return s_bat;
+	read = 1;
+	t = now;
+	if (re_pad_is_tv()) {
+		s_bat = -1;
+		return s_bat;
+	}
+	const int pct = scePowerGetBatteryLifePercent();
+	s_bat = pct < 0 || pct > 100 ? -1 : pct | (scePowerIsBatteryCharging() ? 0x100 : 0);
+	return s_bat;
+}
+// the battery icon (body 24 x 13 with its top at y, a cap at the right) filled to the charge, red at 20% or less; a bolt
+// over it while charging
+static void battery(UiCanvas *c, int x, int y, int pct, int chg)
+{
+	enum { BW = 24, BH = 13 };
+	rrect_outline(c, x, y, BW, BH, 3, 2, COL_DIM);
+	rrect(c, x + BW, y + 4, 3, BH - 8, 1, COL_DIM); // (the cap)
+	const int iw = BW - 6, fw = pct > 0 ? (iw * pct + 50) / 100 : 0;
+	if (fw > 0)
+		ui_rect(c, x + 3, y + 3, fw < 1 ? 1 : fw, BH - 6, pct <= 20 ? UI_RGBA(0xF0, 0x48, 0x40, 0xFF) : COL_DIM);
+	if (chg) { // a bolt of 7 rows (start, width), with a dark edge so it shows over the fill
+		static const signed char bolt[7][2] = { { 4, 2 }, { 3, 2 }, { 2, 2 }, { 1, 5 }, { 3, 2 }, { 2, 2 }, { 1, 2 } };
+		const int bx = x + (BW - 7) / 2, by = y + (BH - 7) / 2;
+		for (int r = 0; r < 7; r++)
+			ui_rect(c, bx + bolt[r][0] - 1, by + r, bolt[r][1] + 2, 1, UI_RGBA(0x00, 0x00, 0x00, 0xA0));
+		for (int r = 0; r < 7; r++)
+			ui_rect(c, bx + bolt[r][0], by + r, bolt[r][1], 1, COL_STAR);
+	}
+}
+// the list's header: the app name in its colours, the version, the position in the list, the battery at the right
 static void gl_header(UiCanvas *c, int n, int sel)
 {
 	char title[96];
 	const int tx = 24 + draw_brand(c, 24, 36, 1.1f);
-	snprintf(title, sizeof(title), " (" RS12_VERSION ") - SELECT GAME (%d/%d)", n ? sel + 1 : 0, n);
+	if (s_search[0])
+		snprintf(title, sizeof(title), " (" RS12_VERSION ") - Search : %s (%d/%d)", s_search, n ? sel + 1 : 0, n);
+	else
+		snprintf(title, sizeof(title), " (" RS12_VERSION ") - SELECT GAME (%d/%d)", n ? sel + 1 : 0, n);
 	ui_text(c, tx, 36, COL_TEXT, 1.1f, title);
-	char have[40];
-	snprintf(have, sizeof(have), "%s %d", s_gl_filter_name[g_set.list_filter], s_gl_nvis);
-	ui_text(c, SCREEN_W - 24 - ui_text_width(0.85f, have), 34, COL_DIM, 0.85f, have);
+	if (s_bat >= 0) {
+		char pc[8];
+		snprintf(pc, sizeof(pc), "%d%%", s_bat & 0xFF);
+		const int px = SCREEN_W - 24 - ui_text_width(0.85f, pc);
+		ui_text(c, px, 34, COL_DIM, 0.85f, pc);
+		battery(c, px - 8 - 3 - 24, 22, s_bat & 0xFF, s_bat >> 8);
+	}
 }
 
 // ---- update window over the game list (Update / Close / Skip this version) ----
@@ -3914,6 +4582,7 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 	ensure_canvases();
 	UiCanvas *c = s_cv;
 	int want = -1;
+	s_search[0] = 0;
 	const int nplay = gl_scan(rom_dir);
 	for (int i = 0; i < s_gl_n; i++)
 		if (initial_set && !strcmp(initial_set, s_gl[i]->name))
@@ -3927,14 +4596,18 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 		g_set.list_filter = RS12_LIST_PLAYABLE; // (the cursor goes to the last game, so it must be on screen)
 	const int filter0 = g_set.list_filter;
 	static int idx[GL_MAX];
-	int sel = 0, about = 0, dirty = 1, upd = 0;
+	int sel = 0, dirty = 1, upd = 0;
 	static int upd_offered; // (once per run)
 	uint64_t rep = 0;
 	float scr = -1, tgt = 0; // list scroll (rows): drawn position easing to the target
+	// touch: down at (t_x0, t_y0), last y, moved past a tap, began over the games; drag: the games scrolled by touch (the
+	// cursor stays on its game, a button brings the list back to it), vel: rows a frame after the finger left
+	int t_down = 0, t_x0 = 0, t_y0 = 0, t_last = 0, t_moved = 0, t_list = 0, t_idle = 0, t_stop = 0, drag = 0;
+	float vel = 0;
 	static uint32_t *under; // the dimmed list under the options window
 	int under_ok = 0;
 	int mq_sel = -1, mq_t = 0, mq_tw = 0; // scrolling title of the selected row (marquee)
-	int fast_ok = 0, fast_key[7] = { 0 }, hdr_sel = -1, bar_n = -1, sync_left = 0; // rows as strips
+	int fast_ok = 0, fast_key[8] = { 0 }, hdr_sel = -1, hdr_bat = -2, bar_n = -1, sync_left = 0; // rows as strips
 	float bar_scr = -1;
 	s_gl_ntabs = s_gl_tab = 0;
 	int n = gl_build(idx, want, &sel);
@@ -4009,7 +4682,6 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 		if (pad.lx < 128 - 48) b |= SCE_CTRL_LEFT;
 		if (pad.lx > 128 + 48) b |= SCE_CTRL_RIGHT;
 		if (!s_list_mode && ps_poll() && !upd) { // the PS button opens the options here too (rs12_menu_update closes them)
-			about = 0;
 			msg[0] = 0;
 			rs12_settings_use_global();
 			s_list_mode = 1;
@@ -4026,7 +4698,88 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 			dirty = 1;
 		const int o_ok = g_set.confirm == RS12_CONFIRM_CIRCLE;
 		const uint32_t ok = o_ok ? SCE_CTRL_CIRCLE : SCE_CTRL_CROSS, back = o_ok ? SCE_CTRL_CROSS : SCE_CTRL_CIRCLE;
-		if (!upd && !upd_offered && !s_list_mode && !about && !msg[0] && rs12_update_ready()) {
+		int about = 0; // the footer's About was tapped (it has no pad key)
+		{ // touch: a tap picks a type tab, a game (tapped again: it starts), its star, a word of the button help or the settings
+			// button, or closes a notice; a drag over the games scrolls them (and goes on a little after the finger leaves)
+			int tx[6], ty[6];
+			const int tn = ui_touch(tx, ty);
+			touch_fx(tn, tx[0], ty[0]);
+			const int la_t = TITLE_H + 40, lb_t = SCREEN_H - LIST_FOOT_H, idle = !upd && !s_list_mode && !msg[0];
+			if (tn && !t_down) {
+				t_down = 1;
+				t_x0 = tx[0];
+				t_y0 = t_last = ty[0];
+				t_moved = 0;
+				t_stop = vel != 0.0f; // (a touch that stops the list is not a tap)
+				vel = 0;
+				t_idle = idle; // (a finger that closed the options is not a tap on the list)
+				t_list = idle && ty[0] >= la_t && ty[0] < lb_t;
+			} else if (tn) {
+				if (abs(ty[0] - t_y0) > 12 || abs(tx[0] - t_x0) > 12)
+					t_moved = 1;
+				if (t_moved && t_list && n) {
+					const float d = (float)(ty[0] - t_last) / GL_LINE;
+					tgt -= d;
+					if (!s_touch_held) // (the finger's speed over its last frames)
+						vel = vel * 0.5f - d * 0.5f;
+					drag = 1;
+				}
+				t_last = ty[0];
+			} else if (t_down) {
+				t_down = 0;
+				if (t_moved && drag)
+					vel = flick_boost(vel);
+				if (!t_moved && t_stop)
+					; // (it only stopped the list)
+				else if (!t_moved && msg[0])
+					pressed |= ok; // (closes it)
+				else if (!t_moved && idle && t_idle) {
+					const int x = t_x0, y = t_y0, gdx = x - GEAR_CX, gdy = y - GEAR_CY;
+					if (gdx * gdx + gdy * gdy < 30 * 30)
+						pressed |= SCE_CTRL_START;
+					else if (y < TITLE_H)
+						; // (the header: nothing to tap)
+					else if (y >= lb_t) { // the footer's buttons
+						for (int k = 0; k < s_ft_n; k++)
+							if (x >= s_ft_x0[k] && x < s_ft_x1[k]) {
+								pressed |= s_ft_key[k];
+								if (!s_ft_key[k]) { // (About: no key)
+									about = 1;
+									dirty = 1;
+								}
+							}
+					} else if (y < la_t) { // a type tab
+						for (int k = 0; k < s_gl_ntabs; k++)
+							if (x >= s_tab_x0[k] && x < s_tab_x1[k] && k != s_gl_tab) {
+								s_gl_tab = k;
+								int first = -1;
+								for (int i = 0; i < s_gl_n && first < 0; i++)
+									if (gl_visible(i) && s_gl_tier[i] == s_gl_tabs[s_gl_tab])
+										first = i;
+								n = gl_build(idx, first, &sel);
+								scr = -1;
+								drag = 0;
+								break;
+							}
+					} else if (y >= la_t && y < lb_t && n) { // a game
+						const int i = (int)floorf((float)(y - la_t - 18) / GL_LINE + scr);
+						if (i >= 0 && i < n) {
+							if (x < 44)
+								pressed |= SCE_CTRL_SQUARE; // (its star)
+							else if (i == sel)
+								pressed |= ok;
+							sel = i;
+							drag = 0;
+						}
+					}
+				}
+			}
+			if (pressed)
+				dirty = 1;
+			if (tn || t_down)
+				dirty = 1;
+		}
+		if (!upd && !upd_offered && !s_list_mode && !msg[0] && rs12_update_ready()) {
 			upd = upd_offered = 1; // a newer release: Update / Close / Skip this version
 			upd_wrap(rs12_update_notes());
 			s_upd_scroll = s_upd_btn = 0;
@@ -4090,13 +4843,9 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 		} else if (msg[0]) { // notice box: any button closes it
 			if (pressed & (ok | back | SCE_CTRL_START | SCE_CTRL_TRIANGLE))
 				msg[0] = 0;
-		} else if (about) {
-			const int max = ABOUT_LINES > ABOUT_VISIBLE ? ABOUT_LINES - ABOUT_VISIBLE : 0;
-			if ((pressed & SCE_CTRL_UP) && s_about_scroll > 0) s_about_scroll--;
-			if ((pressed & SCE_CTRL_DOWN) && s_about_scroll < max) s_about_scroll++;
-			if (pressed & (ok | back | SCE_CTRL_TRIANGLE | SCE_CTRL_START))
-				about = 0;
 		} else {
+			if (pressed)
+				drag = 0; // (the buttons take the list back from a touch scroll)
 			if (n && (pressed & SCE_CTRL_UP)) sel = wrap(sel - 1, n);
 			if (n && (pressed & SCE_CTRL_DOWN)) sel = wrap(sel + 1, n);
 			// left/right: one page, L/R: tier tab
@@ -4122,10 +4871,30 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 				if (g_set.list_filter == RS12_LIST_FAVORITES && !gl_visible(cur))
 					w2 = sel + 1 < n ? idx[sel + 1] : (sel > 0 ? idx[sel - 1] : -1);
 				n = gl_build(idx, w2, &sel);
-			} else if (pressed & SCE_CTRL_TRIANGLE) {
-				about = 1;
-				s_about_scroll = 0;
-			} else if (pressed & SCE_CTRL_START) { // options: edit and save global settings only
+			} else if (pressed & SCE_CTRL_TRIANGLE) { // search; again: the whole list, at the game chosen in the results
+				const int cur = n ? idx[sel] : -1;
+				if (s_search[0]) {
+					s_search[0] = 0;
+					n = gl_build(idx, cur, &sel);
+					scr = -1;
+				} else {
+					char q[sizeof(s_search)];
+					if (rs12_ime_input("Search: ROM name or title", "", q, sizeof(q)) && q[0]) {
+						snprintf(s_search, sizeof(s_search), "%s", q);
+						n = gl_build(idx, -1, &sel);
+						scr = -1;
+						if (!n) {
+							snprintf(msg, sizeof(msg), "No game matches \"%s\"", q);
+							s_search[0] = 0;
+							n = gl_build(idx, cur, &sel);
+						}
+					}
+					ui_clear(c);
+					fast_ok = 0; // (the canvas cleared: drawn again in full)
+				}
+				dirty = 1;
+			} else if ((pressed & SCE_CTRL_START) || about) { // options: edit and save global settings only
+				s_mt_block = rs12_time_us() + 400000; // (a tap on the settings button is not a tap on the options)
 				rs12_settings_use_global();
 				s_list_mode = 1;
 				s_page = PAGE_MAIN;
@@ -4133,6 +4902,15 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 				s_pop = 0;
 				s_changed = 0;
 				s_prev_buttons = b; // (so the START press does not act inside options)
+				if (about) { // the footer's About: at the About page, as its row opens it (back: the main page, on that row)
+					int mk[M_COUNT];
+					const int nr = main_list(mk);
+					for (int i = 0; i < nr; i++)
+						if (mk[i] == M_ABOUT)
+							s_sel = i;
+					go_page(PAGE_ABOUT);
+					s_about_scroll = 0;
+				}
 			} else if (n && (pressed & ok)) {
 				const int g = idx[sel];
 				if (gl_playable(g)) {
@@ -4170,12 +4948,22 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 			float maxt = (float)n - rows_f;
 			if (maxt < 0)
 				maxt = 0;
-			if (sel < tgt + 1)
-				tgt = (float)sel - 1;
-			if (sel > tgt + rows_f - 2)
-				tgt = (float)sel - rows_f + 2;
-			if (tgt > maxt) tgt = maxt;
-			if (tgt < 0) tgt = 0;
+			if (drag && !t_down && vel != 0.0f) { // (after a drag: it slows down)
+				tgt += vel;
+				vel *= 0.95f;
+				if (fabsf(vel) < 0.015f)
+					vel = 0;
+			}
+			if (!drag) {
+				if (sel < tgt + 1)
+					tgt = (float)sel - 1;
+				if (sel > tgt + rows_f - 2)
+					tgt = (float)sel - rows_f + 2;
+			}
+			if (tgt > maxt) { tgt = maxt; vel = 0; }
+			if (tgt < 0) { tgt = 0; vel = 0; }
+			if (drag) // (the rows follow the finger)
+				scr = tgt;
 			if (scr < 0)
 				scr = tgt;
 			else if (scr - tgt > 1.5f * rows_f || tgt - scr > 1.5f * rows_f) // long jumps: ease over the last half page only
@@ -4189,11 +4977,12 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 		}
 		// nothing open over the list: the rows are strips (row_tex) and the canvas is drawn again in full only when the
 		// header, tabs or footer change; a cursor move redraws the header line, scrolling only the scroll bar
-		const int fast = !about && !msg[0] && !upd && !s_list_mode;
+		const int fast = !msg[0] && !upd && !s_list_mode;
+		const int bat = bat_poll(); // (the header shows it; a new value redraws the header line)
 		int full = dirty && !fast;
 		if (fast) {
 			theme();
-			const int key[7] = { s_theme_gen, s_gl_tab, s_gl_ntabs, g_set.list_filter, s_gl_nvis, n, o_ok };
+			const int key[8] = { s_theme_gen, s_gl_tab, s_gl_ntabs, g_set.list_filter, s_gl_nvis, n, o_ok, s_search[0] != 0 };
 			if (!fast_ok || memcmp(key, fast_key, sizeof(key))) {
 				memcpy(fast_key, key, sizeof(key));
 				fast_ok = 1;
@@ -4213,13 +5002,6 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 			if (s_list_mode && under_ok) {
 				// options over the list: menu_paint puts back the dimmed list kept when they opened, around the window
 				s_under = under;
-			} else if (about) {
-				ui_fill_rows(c, bgr, 0, 0, SCREEN_W, SCREEN_H);
-				ui_text(c, px + 24, py + 36, COL_TEXT, 1.1f, "ABOUT");
-				for (int i = 0; i < ABOUT_VISIBLE && s_about_scroll + i < ABOUT_LINES; i++)
-					about_line(c, px + 24, py + TITLE_H + i * ABOUT_LH + 22, s_about[s_about_scroll + i]);
-				text_keys(c, px + 24, py + h - 13, COL_DIM,
-					o_ok ? "Up/Down: scroll   " G_CRO " / " G_TRI ": back" : "Up/Down: scroll   " G_CIR " / " G_TRI ": back");
 			} else {
 				ui_fill_rows(c, bgr, 0, 0, SCREEN_W, SCREEN_H);
 				const int rw = w - 16; // (room for the scroll bar)
@@ -4248,8 +5030,11 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 					for (int t = 0; t < s_gl_ntabs; t++) {
 						const char *tn = s_tier_name[s_gl_tabs[t]];
 						const int tw = ui_text_width(0.95f, tn) + 20;
+						s_tab_x0[t] = s_tab_x1[t] = 0;
 						if (tbx + tw > px + w - 16)
 							break;
+						s_tab_x0[t] = tbx;
+						s_tab_x1[t] = tbx + tw + 8;
 						if (t == s_gl_tab)
 							rrect(c, tbx + 6, py + TITLE_H + 26, tw - 12, 4, 2, COL_SEL);
 						ui_text(c, tbx + 10, py + TITLE_H + 20, t == s_gl_tab ? COL_TEXT : COL_DIM, 0.95f, tn);
@@ -4260,12 +5045,34 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 					text_keys(c, px + 48, la + 40, COL_DIM, "No favorites. " G_SQU ": add, SELECT: filter");
 				else if (!n)
 					ui_text(c, px + 48, la + 40, COL_DIM, 1.0f, "No playable games. SELECT: show all, START: Refresh ROM list");
-				{ // button help on one line
-					char foot[192];
-					snprintf(foot, sizeof(foot), "%s: play   " G_SQU ": favorite   " G_TRI ": about   %sLeft/Right: page   SELECT: %s   START: options",
-						o_ok ? G_CIR : G_CRO, s_gl_ntabs > 1 ? "L/R: type   " : "",
-						s_gl_filter_name[wrap(g_set.list_filter + 1, RS12_LIST_FILTER_COUNT)]);
-					text_keys(c, px + 24, py + h - 13, COL_DIM, foot);
+				{ // the footer: touch buttons (each also a pad key, but About), the settings button at the right
+					char f[5][48];
+					uint32_t fk[5];
+					int fn = 0;
+					snprintf(f[fn], sizeof(f[fn]), "%s  Play", o_ok ? G_CIR : G_CRO);
+					fk[fn++] = ok;
+					snprintf(f[fn], sizeof(f[fn]), G_SQU "  Favorite");
+					fk[fn++] = SCE_CTRL_SQUARE;
+					snprintf(f[fn], sizeof(f[fn]), G_TRI "  %s", s_search[0] ? "All games" : "Search");
+					fk[fn++] = SCE_CTRL_TRIANGLE;
+					snprintf(f[fn], sizeof(f[fn]), "SELECT  %s", s_gl_filter_name[g_set.list_filter]); // (the filter shown; a press steps to the next)
+					fk[fn++] = SCE_CTRL_SELECT;
+					snprintf(f[fn], sizeof(f[fn]), "About"); // (touch only: opens the options at their About page)
+					fk[fn++] = 0;
+					const int by = SCREEN_H - LIST_FOOT_H + 7, bh = 27, pad = 12;
+					int fx = px + 16;
+					s_ft_n = fn;
+					for (int k = 0; k < fn; k++) {
+						const int bw = keys_width(f[k]) + 2 * pad;
+						foot_button(c, fx, by, bw, bh);
+						text_keys(c, fx + pad, by + 19, COL_ITEM, f[k]);
+						s_ft_x0[k] = fx;
+						s_ft_x1[k] = fx + bw;
+						s_ft_key[k] = fk[k];
+						fx += bw + 8;
+					}
+					foot_button(c, GEAR_CX - 22, by, 44, bh);
+					gear(c, (float)GEAR_CX, (float)GEAR_CY, (float)GEAR_R - 2, COL_TEXT);
 				}
 				if (msg[0]) { // notice box (over the list)
 					const int mw = 720, mh = 150, mx = (SCREEN_W - mw) / 2, my = (SCREEN_H - mh) / 2;
@@ -4293,7 +5100,7 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 					}
 				}
 			}
-			if (s_list_mode && !about)
+			if (s_list_mode)
 				menu_paint(c, 1);
 			if (!fast) {
 				focus_end();
@@ -4305,7 +5112,7 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 			const int rw = SCREEN_W - 16;
 			const uint32_t *bgr = theme_rows(1);
 			int drawn = full;
-			if (!full && hdr_sel != sel) { // the position in the header
+			if (!full && (hdr_sel != sel || hdr_bat != bat)) { // the position or the battery in the header
 				ui_fill_rows(c, bgr, 0, 0, SCREEN_W, TITLE_H - 8);
 				gl_header(c, n, sel);
 				drawn = 1;
@@ -4319,6 +5126,7 @@ const char *rs12_game_select(const char *initial_set, const char *rom_dir, volat
 				ui_commit(bar_cv);
 			}
 			hdr_sel = sel;
+			hdr_bat = bat;
 			bar_scr = scr;
 			bar_n = n;
 			// the fade bands at the top and bottom of the rows: the background over them, opaque at the edge

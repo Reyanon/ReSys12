@@ -48,14 +48,22 @@ void rs12_video_strips(const RS12Strip *s, int n, int y0, int y1);
 void rs12_video_layer_alpha(int slot, float a);
 // layer slot turned clockwise by rot * 90 degrees (drawn at x, y as an h x w rectangle when rot is odd)
 void rs12_video_layer_rot(int slot, int rot);
+// one frame while a system dialog (the keyboard) is open: it draws over the picture
+void rs12_video_present_dialog(void);
 // the app's LiveArea background as RGBA (malloc'd, NULL if missing)
 uint8_t *rs12_video_load_bg(int *w, int *h);
 
+// The touch effect over everything, light added to the picture: in each of RS12_FX_LAYERS slots texture t centred at x, y,
+// r from centre to edge, strength a (0: none). Called once a frame while it shows: it goes by itself a few frames after the
+// last call
+#define RS12_FX_LAYERS 2
+void rs12_video_touch_fx(int slot, RS12Tex *t, float x, float y, float r, float a);
+
 // Screen size: aspect 0 = 4:3 (fit height), 1 = integer scale, 2 = full screen. smooth: 1 = bilinear, 0 = nearest (sharp)
 void rs12_video_set_mode(int aspect, int smooth);
-// Outside the game picture (4:3 / integer): border 0 = black, 1 = artwork (falls back to colour), 2 = colour (index 0..5)
+// Outside the game picture (4:3 / integer): border 0 = black, 1 = artwork (else the moving corridor), 2 = colour (index 0..5)
 void rs12_video_set_border(int border, int border_color);
-// Border artwork: ux0:data/resys12/artwork/<set>.png, else <parent>.png, else the app's blank artwork. set NULL drops it
+// Border artwork: ux0:data/resys12/artwork/<set>.png, else <parent>.png, else none (the moving corridor). set NULL drops it
 void rs12_video_set_art(const char *set, const char *parent);
 // The game picture turned clockwise by 0, 90, 180 or 270 degrees (the game's monitor orientation, MAME ROT90 = 90,
 // plus the Rotate setting)

@@ -11,13 +11,25 @@ enum {
 	RS12_KEY_CROSS, RS12_KEY_CIRCLE, RS12_KEY_SQUARE, RS12_KEY_TRIANGLE,
 	RS12_KEY_L, RS12_KEY_R, RS12_KEY_SELECT, RS12_KEY_START,
 	RS12_KEY_L2, RS12_KEY_R2, RS12_KEY_L3, RS12_KEY_R3, // (a controller's; settings before them: keyver < 2, None was 8)
+	// the sticks' directions (settings before them: keyver < 4, None was 12)
+	RS12_KEY_LUP, RS12_KEY_LDOWN, RS12_KEY_LLEFT, RS12_KEY_LRIGHT, RS12_KEY_RUP, RS12_KEY_RDOWN, RS12_KEY_RLEFT, RS12_KEY_RRIGHT,
+	// a whole stick, any direction: no single press gives it, so it is only stepped to (settings before: keyver < 5, None was 20)
+	RS12_KEY_LANY, RS12_KEY_RANY,
 	RS12_KEY_COUNT
 };
+// their bits among the buttons (bits SCE_CTRL_* and RE_PAD_* leave free; masked out of what a pad reports)
+#define RS12_STICK_BITS_L 0x00C60000u
+#define RS12_STICK_BITS_R 0xF0000000u
+#define RS12_STICK_BITS (RS12_STICK_BITS_L | RS12_STICK_BITS_R)
+#define RS12_KEY_EXTRA 3 // keys an action can have besides its first
 #define RS12_KEY_NONE RS12_KEY_COUNT
 // game inputs to map: buttons 1-6 (System 12 JAMMA), coin, start
 enum { RS12_ACT_B1, RS12_ACT_B2, RS12_ACT_B3, RS12_ACT_B4, RS12_ACT_B5, RS12_ACT_B6, RS12_ACT_COIN, RS12_ACT_START, RS12_ACT_COUNT };
 #define RS12_GAME_BUTTONS 6
-enum { RS12_STICK_OFF, RS12_STICK_LEFT, RS12_STICK_RIGHT, RS12_STICK_BOTH, RS12_STICK_COUNT };
+enum { RS12_SDIR_UP, RS12_SDIR_DOWN, RS12_SDIR_LEFT, RS12_SDIR_RIGHT, RS12_SDIR_COUNT };
+// what a stick direction presses: nothing, a lever direction (order of RS12_SDIR_*), game buttons 1-6, coin, start
+enum { RS12_STGT_NONE, RS12_STGT_UP, RS12_STGT_DOWN, RS12_STGT_LEFT, RS12_STGT_RIGHT, RS12_STGT_B1, RS12_STGT_B6 = RS12_STGT_B1 + 5,
+	RS12_STGT_COIN, RS12_STGT_START, RS12_STGT_COUNT };
 // gun / wheel / lever games: the analog stick that aims or steers, and how a gun follows it
 enum { RS12_AIM_LEFT, RS12_AIM_RIGHT, RS12_AIM_STICK_COUNT };
 enum { RS12_AIM_POSITION, RS12_AIM_MOVE, RS12_AIM_MODE_COUNT };
@@ -27,8 +39,8 @@ enum { RS12_FILTER_SMOOTH, RS12_FILTER_SHARP, RS12_FILTER_COUNT };
 // scanlines (kept in the settings file for later; no shader yet, so the Display page does not show them)
 enum { RS12_SCAN_OFF, RS12_SCAN_CRT_SOFT, RS12_SCAN_CRT_SHARP, RS12_SCAN_PX2, RS12_SCAN_PX3, RS12_SCAN_PX4, RS12_SCAN_COUNT };
 enum { RS12_SCAN_LIGHT, RS12_SCAN_MEDIUM, RS12_SCAN_HEAVY, RS12_SCAN_STRENGTH_COUNT };
-// outside the game screen (4:3 / integer): black, artwork (ux0:data/resys12/artwork/<set>.png, else the app's blank
-// artwork), solid colour
+// outside the game screen (4:3 / integer): black, artwork (ux0:data/resys12/artwork/<set>.png, else the moving corridor),
+// solid colour
 enum { RS12_BORDER_BLACK, RS12_BORDER_ARTWORK, RS12_BORDER_COLOR, RS12_BORDER_COUNT };
 // screen rotation: Auto = vertical games upright on the landscape screen; Vertical L / R = upright with the Vita turned
 // left (right edge up) / right (left edge up), directions turned with it
@@ -55,7 +67,8 @@ enum { RS12_TURBO_FAST, RS12_TURBO_MEDIUM, RS12_TURBO_SLOW, RS12_TURBO_SPEED_COU
 // one player's controls (Controls > Port N Controls; RetroArch style)
 typedef struct {
 	int keymap[RS12_ACT_COUNT]; // RS12_KEY_* (buttons 2-6 may be RS12_KEY_NONE)
-	int stick;         // RS12_STICK_* (analog stick used as lever)
+	int keyx[RS12_ACT_COUNT][RS12_KEY_EXTRA]; // more keys for the same action, from the first; RS12_KEY_NONE: no more
+	int smap[2][RS12_SDIR_COUNT]; // RS12_STGT_*: what each direction of the left (0) and right (1) stick presses
 	int turbo_key;     // Vita button that triggers turbo, RS12_KEY_NONE = off
 	int turbo_btn;     // game button to turbo, 1..6
 	int turbo_speed;   // RS12_TURBO_*
@@ -105,6 +118,9 @@ void rs12_settings_default_keys(void);     // every port and the gun / wheel / t
 void rs12_settings_default_port(int port); // one port's buttons, stick, turbo and combo keys
 void rs12_settings_load(void);
 void rs12_settings_save(void);
+uint32_t rs12_act_bits(const rs12_port *p, int act); // the bits of all an action's keys
+uint32_t rs12_stick_bits(int lx, int ly, int rx, int ry); // the directions tilted more than 48 from center 128
+uint32_t rs12_menu_accent(void);      // the theme's accent colour (ABGR)
 uint32_t rs12_key_code(int key);       // RS12_KEY_* -> SCE_CTRL_* (0 for RS12_KEY_NONE)
 const char *rs12_key_name(int key);    // "Cross" ... "None"
 // per-game settings (cfg/<set>.cfg). If present, rs12_settings_load_game overrides the global values.
@@ -137,6 +153,8 @@ int rs12_game_buttons(const char *set); // button count used for a set (from its
 // kernel helper for the PS button and the update install (module/rs12_kctrl.skprx; may restart the app once after boot:
 // restarted = the app was started again for it, argument "kctrl")
 void rs12_kctrl_init(int restarted);
+void rs12_kctrl_cpu3(int hook); // CPU3 for the app's threads (see rs12_cpu3_usable)
+void rs12_kctrl_cpu3_release(void);
 int rs12_kctrl_ready(void);
 int rs12_menu_should_open(uint32_t buttons);              // 1 at the moment SELECT+START or PS is pressed
 rs12_menu_result rs12_menu_update(uint32_t buttons);
